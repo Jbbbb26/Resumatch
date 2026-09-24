@@ -1,5 +1,4 @@
 @import "tailwindcss";
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -10,10 +9,10 @@
 ::-webkit-scrollbar-thumb { background: #1e3044; border-radius: 9999px; }
 ::-webkit-scrollbar-thumb:hover { background: #2a415a; }
 
-/* Light mode overrides (Triggered by 'light-mode' class on HTML tag) */
-html.light-mode ::-webkit-scrollbar-track { background: #f1f5f9; }
-html.light-mode ::-webkit-scrollbar-thumb { background: #cbd5e1; }
-html.light-mode body { background-color: #f8fafc; color: #1e293b; }
+/* Light mode overrides using standard .dark class toggling */
+html:not(.dark) ::-webkit-scrollbar-track { background: #f1f5f9; }
+html:not(.dark) ::-webkit-scrollbar-thumb { background: #cbd5e1; }
+html:not(.dark) body { background-color: #f8fafc; color: #1e293b; }
 
 /* Slider styling */
 input[type=range].accent-slider {
@@ -29,4 +28,13 @@ input[type=range].accent-slider::-webkit-slider-thumb {
   border-radius: 50%;
   background: #e2f1e9;
   cursor: pointer;
+}
+html:not(.dark) body { 
+  background-color: #f8fafc; 
+  color: #1e293b;
+  @apply font-sans; 
+}
+
+html.dark body {
+  @apply font-sans;
 }

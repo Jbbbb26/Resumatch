@@ -1,6 +1,7 @@
 import { useState , useEffect} from 'react';
 import { Link, useNavigate , useLocation} from 'react-router-dom'; 
 import { registerUser, loginWithGoogle } from '../../data/services/authService';
+import AppIcon from '../../../assets/Icon.png';
 
 export default function Signup() {
   const navigate = useNavigate(); 
@@ -56,14 +57,12 @@ useEffect(() => {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#F8F9FA]">
+    <div className="min-h-screen flex flex-col bg-[#F8F9FA] font-sans">
       
       <header className="flex items-center justify-between px-8 py-4 bg-white border-b border-slate-100">
         <div className="flex items-center gap-2">
-          <div className="w-8 h-8 bg-indigo-600 rounded flex items-center justify-center text-white font-bold text-lg">
-            R
-          </div>
-          <span className="text-xl font-bold text-slate-900">ResuMatch</span>
+          <img src={AppIcon} alt="ResuMatch Logo" className="w-10 h-10 object-cover rounded" />
+          <span className="text-xl font-bold font-serif text-slate-900">ResuMatch</span>
         </div>
         <div className="flex items-center gap-6 text-sm font-medium text-slate-600">
           <a href="#" className="flex items-center gap-1 hover:text-indigo-600 transition-colors">
@@ -85,7 +84,7 @@ useEffect(() => {
         <div className="bg-white max-w-md w-full rounded-2xl shadow-sm border border-slate-200 p-8 space-y-8">
           
           <div className="space-y-1">
-            <h1 className="text-2xl font-bold text-slate-900">
+            <h1 className="text-2xl font-bold font-serif text-slate-900">
               {activeRole ? 'Create your account' : 'How will you use ResuMatch?'}
             </h1>
             <p className="text-sm text-slate-500">

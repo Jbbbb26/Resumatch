@@ -11,7 +11,7 @@ import {
   updateUserMetadata,    
   createPublicProfile
 } from '../../data/services/authService'; 
-
+import AppIcon from '../../../assets/Icon.png';
 export default function Login() {
   const [verifying, setVerifying] = useState(true);
 
@@ -176,13 +176,11 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#F8F9FA] relative">
+    <div className="min-h-screen flex flex-col bg-[#F8F9FA] relative font-sans">
       <header className="flex items-center justify-between px-6 py-4 bg-white shadow-sm">
         <div className="flex items-center gap-2">
-          <div className="w-8 h-8 bg-indigo-600 rounded flex items-center justify-center text-white font-bold">
-            R
-          </div>
-          <span className="text-xl font-semibold text-slate-800">ResuMatch</span>
+          <img src={AppIcon} alt="ResuMatch Logo" className="w-10 h-10 object-cover rounded" />
+          <span className="text-xl font-bold font-serif text-slate-900">ResuMatch</span>
         </div>
         <div className="flex items-center gap-6 text-sm text-slate-600">
           <a href="#" className="hover:text-indigo-600">Support & Guides</a>
@@ -197,7 +195,7 @@ export default function Login() {
         <div className="bg-white max-w-md w-full rounded-2xl shadow-sm border border-slate-100 p-8 space-y-6">
           
           <div className="text-center space-y-1">
-            <h1 className="text-2xl font-semibold text-slate-900">Welcome back</h1>
+            <h1 className="text-2xl font-bold font-serif text-slate-900">Welcome back</h1>
             <p className="text-sm text-slate-500">Sign in to continue to your ResuMatch workspace</p>
           </div>
 
