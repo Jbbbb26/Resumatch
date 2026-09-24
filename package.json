@@ -1,0 +1,36 @@
+{
+  "name": "resumatch",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "server": "nodemon server.js",
+    "client": "vite",
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@google/genai": "^2.24.0",
+    "@supabase/supabase-js": "^2.117.1",
+    "cors": "^2.8.6",
+    "dotenv": "^18.0.3",
+    "express": "^5.2.1",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^7.18.4"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/react": "^18.0.27",
+    "@types/react-dom": "^18.0.10",
+    "@vitejs/plugin-react": "^3.1.0",
+    "autoprefixer": "^10.6.1",
+    "concurrently": "^10.0.5",
+    "nodemon": "^3.1.14",
+    "postcss": "^8.5.28",
+    "supabase": "^2.117.0",
+    "tailwindcss": "^4.3.3",
+    "vite": "^4.1.0"
+  }
+}
