@@ -23,16 +23,10 @@ export const registerUser = async (email, password, role, fullName, companyName)
 };
 export const loginWithEmail = async (email, password) => {
   try {
-    const response = await fetch('http://localhost:3000/api/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password })
-    });
-    
-    const result = await response.json();
-    if (!result.success) throw new Error(result.message);
-    
-    return { success: true, data: result.data };
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) throw error;
+
+    return { success: true, data };
   } catch (error) {
     return { success: false, message: error.message };
   }
