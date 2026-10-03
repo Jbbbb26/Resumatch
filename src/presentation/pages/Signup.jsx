@@ -42,10 +42,33 @@ useEffect(() => {
     setLoading(true);
     setMessage('');
 
-    const response = await registerUser(email, password, activeRole, fullName, companyName);
+    // BUG_005 Fix: Reject inputs with angled brackets to prevent XSS/script tags
+    const invalidCharRegex = /[<>]/;
+    if (invalidCharRegex.test(fullName)) {
+      setMessage('Error: Full Name contains invalid characters (e.g., < or >).');
+      setLoading(false);
+      return;
+    }
+    
+    // Applying the same safety check to Company Name
+    if (activeRole === 'recruiter' && invalidCharRegex.test(companyName)) {
+      setMessage('Error: Company Name contains invalid characters.');
+      setLoading(false);
+      return;
+    }
 
+    const response = await registerUser(email, password, activeRole, fullName, companyName);
+          
     if (!response.success) {
-      setMessage(`Error: ${response.message}`);
+      // Safely fallback to an empty string if message is undefined
+      const errorMsg = response.message || "";
+      
+      // Check both your backend's exact wording and the default phrasing
+      if (errorMsg.toLowerCase().includes('already registered') || errorMsg.toLowerCase().includes('already exists')) {
+        setMessage('This email is already registered. Please sign in instead.');
+      } else {
+        setMessage(`Error: ${errorMsg}`);
+      }
       setLoading(false);
     } else {
       if (activeRole === 'recruiter') {
@@ -55,7 +78,7 @@ useEffect(() => {
       }
     }
   };
-
+  
   return (
     <div className="min-h-screen flex flex-col bg-[#F8F9FA] font-sans">
       
@@ -144,7 +167,13 @@ useEffect(() => {
                 <span className="flex-shrink-0 px-4 text-xs font-semibold text-slate-400 tracking-wider uppercase">or sign up with email</span>
                 <div className="flex-grow border-t border-slate-200"></div>
               </div>
-              
+              {message && (
+                <div className="mb-4 bg-red-50 text-red-600 p-3 rounded-lg text-sm border border-red-100">
+                  {message.toLowerCase().includes("already registered") 
+                    ? "This email is already registered. Please sign in instead." 
+                    : message}
+                </div>
+              )}
           <form onSubmit={handleSignup} className="space-y-5">
             <div className="space-y-1.5">
               <label className="text-sm font-semibold text-slate-800">Full Name</label>

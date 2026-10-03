@@ -18,10 +18,42 @@ const profileCompletion = (profile) => profile ? Math.round((profileFields.filte
 const jobText = (job) => [job.title, job.description, job.requirements, job.location, job.work_type, job.employment_type].filter(Boolean).join(" ").toLowerCase();
 
 function JobCard({ job, isSaved, onToggleSave, isDarkMode }) {
-  return <div className={`flex items-center justify-between gap-4 p-5 rounded-2xl border transition-colors group ${isDarkMode ? 'bg-[#121b27] border-white/5 hover:border-white/10' : 'bg-white border-slate-200 hover:border-slate-300 shadow-sm'}`}>
-    <div className="min-w-0"><h3 className={`text-base font-bold group-hover:text-[#ea6036] transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{job.title}</h3><p className={`text-xs mt-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{job.location || 'Location not specified'} · {job.work_type || 'Work type not specified'} · {job.employment_type || 'Employment type not specified'}</p></div>
-    <div className="flex items-center gap-3 text-right shrink-0"><div><span className="block text-xl font-bold text-[#4fa784]">—</span><span className={`text-[10px] uppercase tracking-wider ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Match</span></div><button onClick={() => onToggleSave(job.id)} aria-label={isSaved ? `Remove ${job.title} from saved jobs` : `Save ${job.title}`} className={`p-2 rounded-xl border transition-colors ${isDarkMode ? 'border-white/5 text-slate-300 hover:bg-[#1a2636]' : 'border-slate-200 text-slate-500 hover:bg-slate-100'}`}><svg className={`w-5 h-5 ${isSaved ? 'fill-[#ea6036] text-[#ea6036]' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-4-7 4V5z" /></svg></button></div>
-  </div>;
+  return (
+    <div className={`flex items-center justify-between gap-4 p-5 rounded-2xl border transition-colors group ${isDarkMode ? 'bg-[#121b27] border-white/5 hover:border-white/10' : 'bg-white border-slate-200 hover:border-slate-300 shadow-sm'}`}>
+      
+      <div className="min-w-0">
+        <h3 className={`text-base font-bold group-hover:text-[#ea6036] transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
+          {job.title}
+        </h3>
+        <p className={`text-xs mt-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+          {job.company_name || 'Unknown Company'} · {job.location || 'Location not specified'} · {job.work_type || 'Work type not specified'}
+        </p>
+      </div>
+
+      <div className="flex items-center gap-3 text-right shrink-0">
+        <div>
+          {/* Dynamically renders the calculated AI match percentage */}
+          <span className="block text-xl font-bold text-[#4fa784]">
+            {job.match != null ? `${job.match}%` : '—'}
+          </span>
+          <span className={`text-[10px] uppercase tracking-wider ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
+            Match
+          </span>
+        </div>
+        
+        <button 
+          onClick={() => onToggleSave(job.id)} 
+          aria-label={isSaved ? `Remove ${job.title} from saved jobs` : `Save ${job.title}`} 
+          className={`p-2 rounded-xl border transition-colors ${isDarkMode ? 'border-white/5 text-slate-300 hover:bg-[#1a2636]' : 'border-slate-200 text-slate-500 hover:bg-slate-100'}`}
+        >
+          <svg className={`w-5 h-5 ${isSaved ? 'fill-[#ea6036] text-[#ea6036]' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-4-7 4V5z" />
+          </svg>
+        </button>
+      </div>
+      
+    </div>
+  );
 }
 
 function JobSkeleton({ isDarkMode }) {
@@ -46,43 +78,103 @@ export default function CandidateDashboard() {
   useEffect(() => { document.documentElement.classList.toggle('light-mode', !isDarkMode); }, [isDarkMode]);
 
   useEffect(() => {
-    let isMounted = true;
-    const loadDashboard = async () => {
-      const response = await getCurrentUser();
-      if (!response.success || !response.data) { navigate('/login'); return; }
-      let metadata = response.data.user_metadata || {};
-      const authIntent = sessionStorage.getItem('authIntent');
-      const intendedRole = sessionStorage.getItem('intendedRole');
-      if (authIntent === 'signup' && !metadata.role) {
-        await updateUserMetadata({ role: intendedRole });
-        metadata = { ...metadata, role: intendedRole };
-        sessionStorage.removeItem('authIntent');
-        sessionStorage.removeItem('intendedRole');
-      }
-      if (metadata.role === 'recruiter') { navigate('/recruiter-dashboard'); return; }
-      const fullName = metadata.full_name || response.data.email.split('@')[0];
-      const nameParts = fullName.split(' ');
-      const candidate = { id: response.data.id, name: fullName, email: response.data.email, initials: nameParts.length > 1 ? `${nameParts[0][0]}${nameParts[nameParts.length - 1][0]}`.toUpperCase() : fullName.slice(0, 2).toUpperCase() };
-      const [profileResult, jobsResult, savedResult] = await Promise.all([
-        supabase.from('candidate_profiles').select('*').eq('id', candidate.id).maybeSingle(),
-        supabase.from('job_postings').select('id,title,location,work_type,employment_type,description,requirements,status,created_at').eq('status', 'active').order('created_at', { ascending: false }),
-        supabase.from('saved_jobs').select('id,job_posting_id,created_at,job_postings(id,title,location,work_type,employment_type,status,created_at)').eq('candidate_id', candidate.id).order('created_at', { ascending: false }),
-      ]);
-      if (!isMounted) return;
-      setUser(candidate); setProfile(profileResult.data || null);
-      if (jobsResult.error) setJobsError(jobsResult.error.message); else setJobs(jobsResult.data || []);
-      if (savedResult.error) setSavedError(savedResult.error.message); else setSavedJobs(savedResult.data || []);
-      setIsLoading(false);
-    };
-    loadDashboard().catch((error) => { if (isMounted) { setJobsError(error.message); setIsLoading(false); } });
-    return () => { isMounted = false; };
-  }, [navigate]);
+    if (isDarkMode) {
+      document.documentElement.classList.remove('light-mode');
+    } else {
+      document.documentElement.classList.add('light-mode');
+    }
+  }, [isDarkMode]);
+  const loadRecommendations = async (userId) => {
+    try {
+      // Call the SQL function we just created
+      const { data, error } = await supabase.rpc('get_recommended_jobs', {
+        p_candidate_id: userId,
+        match_threshold: 0.4, // Returns anything with a 40% match or higher
+        match_count: 10       // Top 10 jobs
+      });
 
+      if (error) throw error;
+
+      if (data) {
+        // Convert the raw decimal (e.g., 0.912) into a clean percentage (91)
+        const rankedJobs = data.map(job => ({
+          ...job,
+          match: Math.round(job.similarity * 100)
+        }));
+        setJobs(rankedJobs);
+      }
+    } catch (err) {
+      console.error("Matching Error:", err);
+      setJobsError(err.message);
+    }
+  };
+  useEffect(() => {
+    const loadUser = async () => {
+      try {
+        const response = await getCurrentUser();
+
+        if (response.success && response.data) {
+          let metadata = response.data.user_metadata || {};
+          const authIntent = sessionStorage.getItem('authIntent');
+          const intendedRole = sessionStorage.getItem('intendedRole');
+
+          if (authIntent === 'signup') {
+            if (metadata.role) {
+              await logoutUser();
+              sessionStorage.removeItem('authIntent');
+              sessionStorage.removeItem('intendedRole');
+              navigate('/signup', {
+                state: { error: 'This Google account is already registered. Please Sign In.' }
+              });
+              return;
+            } else {
+              await updateUserMetadata({ role: intendedRole });
+              metadata.role = intendedRole;
+              sessionStorage.removeItem('authIntent');
+              sessionStorage.removeItem('intendedRole');
+            }
+          }
+
+          if (metadata.role === 'recruiter') {
+            navigate('/recruiter-dashboard');
+            return;
+          }
+
+          // Defensively parse the name to prevent array out-of-bounds crashes
+          const rawName = metadata.full_name || response.data.email?.split('@')[0] || "Candidate";
+          const cleanName = rawName.trim();
+          const nameParts = cleanName.split(/\s+/);
+
+          const initials = nameParts.length > 1
+            ? `${nameParts[0][0] || ''}${nameParts[nameParts.length - 1][0] || ''}`.toUpperCase()
+            : cleanName.substring(0, 2).toUpperCase();
+
+          setUser({
+            id: response.data.id,
+            name: cleanName,
+            email: response.data.email,
+            initials: initials
+          });
+          await loadRecommendations(response.data.id);
+        } else {
+          // If no session exists, kick to login
+          navigate('/login');
+        }
+      } catch (error) {
+        console.error("Dashboard Load Error:", error);
+        navigate('/login');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    loadUser();
+  }, [navigate]);
   const handleLogout = async () => {
     const result = await logoutUser();
     if (result.success) navigate("/login");
   };
-  
+
   const filteredJobs = useMemo(() => {
     const titleSearch = titleQuery.trim().toLowerCase();
     const locationSearch = locationQuery.trim().toLowerCase();
@@ -90,7 +182,7 @@ export default function CandidateDashboard() {
   }, [jobs, titleQuery, locationQuery]);
 
 
-  if (isLoading) {
+  if (isLoading || !user) {
     return (
       <div className={`min-h-screen flex flex-col items-center justify-center space-y-4 ${isDarkMode ? 'bg-[#090e15]' : 'bg-slate-50'}`}>
         <svg className="animate-spin h-10 w-10 text-[#ea6036]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -115,7 +207,7 @@ export default function CandidateDashboard() {
         <div className="mb-8">
           <p className={`text-sm mb-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Welcome back</p>
           <h1 className={`text-3xl sm:text-4xl font-serif mb-3 ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
-            Good to see you, {user.name}
+            Good to see you, {user?.name || 'There'}
           </h1>
           <p className={`text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
             Your profile is <span className="text-[#4fa784] font-semibold">{profileCompletion(profile)}%</span> complete. Finish it to improve your match scores across every listing.
@@ -192,13 +284,13 @@ export default function CandidateDashboard() {
 
       {isFilterModalOpen && <FilterModal onClose={() => setFilterModalOpen(false)} />}
       {isProfileModalOpen && (
-  <ProfileModal 
-    user={user} 
-    onClose={() => setProfileModalOpen(false)} 
-    onLogout={handleLogout} 
-    isDarkMode={isDarkMode} 
-  />
-)}
-      </div>
+        <ProfileModal
+          user={user}
+          onClose={() => setProfileModalOpen(false)}
+          onLogout={handleLogout}
+          isDarkMode={isDarkMode}
+        />
+      )}
+    </div>
   );
 }

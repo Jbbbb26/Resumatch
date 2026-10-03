@@ -4,7 +4,6 @@ export const FilterModal = ({ onClose, isDarkMode = true }) => {
   const [scoreThreshold, setScoreThreshold] = useState(92);
   const [hideMissingSkills, setHideMissingSkills] = useState(true);
 
-  // Dynamic Styles
   const inputBg = isDarkMode ? 'bg-[#0a121c] border-[#1d2d3e] text-slate-200' : 'bg-white border-slate-300 text-slate-700';
   const labelColor = isDarkMode ? 'text-slate-300 hover:text-white' : 'text-slate-600 hover:text-slate-900';
 

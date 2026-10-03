@@ -30,6 +30,47 @@ app.post('/api/login', async (req, res) => {
   
   res.json({ success: true, data: data });
 });
+app.post('/api/post-job', async (req, res) => {
+  const { recruiter_id, title, location, work_type, employment_type, description, requirements } = req.body;
+
+  try {
+    // 1. Combine the most important text for the AI to evaluate
+    const textToEmbed = `Job Title: ${title}. Work Type: ${work_type}, ${employment_type}. Description: ${description}. Requirements: ${requirements}`;
+
+    // 2. Generate the mathematical vector using Gemini
+    const embeddingResult = await ai.models.embedContent({
+      model: 'gemini-embedding-2',
+      contents: textToEmbed 
+    });
+    const vectorArray = embeddingResult.embeddings[0].values;
+
+    // 3. Save the job details AND the vector to Supabase
+    const { data, error } = await supabase
+      .from('job_postings')
+      .insert([{
+        recruiter_id,
+        title,
+        location,
+        work_type,
+        employment_type,
+        description,
+        requirements,
+        status: 'active',
+        job_embedding: vectorArray // <-- This is what enables AI matching
+      }])
+      .select()
+      .single();
+
+    if (error) throw new Error(`Database insert failed: ${error.message}`);
+
+    // Return the newly created job back to React
+    res.json({ success: true, data: data });
+
+  } catch (error) {
+    console.error("Job Posting Error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
 app.post('/api/parse-resume', async (req, res) => {
   const { userId, fileName } = req.body;
   console.log(`Processing file: ${fileName} for user: ${userId}`);

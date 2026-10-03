@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getCurrentUser, logoutUser } from '../../data/services/authService';
 import { supabase } from '../../../supabaseClient.js';
@@ -110,9 +110,35 @@ function Jobs({ onNavigate, user }) {
     event.preventDefault();
     setIsSubmitting(true);
     setMessage(null);
-    const { data, error } = await supabase.from('job_postings').insert([{ ...form, recruiter_id: user.id, status: 'active' }]).select().single();
-    if (error) setMessage({ type: 'error', text: error.message });
-    else { setJobs((current) => [data, ...current]); setIsFormOpen(false); setForm(emptyJobForm); }
+
+    try {
+      // Route the data to your backend instead of Supabase directly
+      // Adjust the URL if you are testing locally vs Railway
+      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+      
+      const response = await fetch(`${API_URL}/api/post-job`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...form,
+          recruiter_id: user.id
+        })
+      });
+
+      const result = await response.json();
+
+      if (!result.success) {
+        setMessage({ type: 'error', text: result.message });
+      } else {
+        // Instantly update the UI with the new vectorized job
+        setJobs((current) => [result.data, ...current]);
+        setIsFormOpen(false);
+        setForm(emptyJobForm);
+      }
+    } catch (err) {
+      setMessage({ type: 'error', text: "Failed to connect to the AI server." });
+    }
+    
     setIsSubmitting(false);
   };
   const handleDelete = async (job) => {

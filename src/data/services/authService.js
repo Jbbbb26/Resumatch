@@ -13,12 +13,17 @@ export const registerUser = async (email, password, role, fullName, companyName)
         }
       }
     });
-
-    if (error) throw error;
-    return { success: true, data };
     
+    if (error) throw error;
+
+    // Detect silent duplicate rejection by Supabase
+    if (data?.user && data.user.identities && data.user.identities.length === 0) {
+      return { success: false, message: 'already registered' };
+    }
+    
+    return { success: true, data };
   } catch (error) {
-    return { success: false, message: error.message };
+    return { success: false, message: error?.message || 'Registration failed' };
   }
 };
 export const loginWithEmail = async (email, password) => {
