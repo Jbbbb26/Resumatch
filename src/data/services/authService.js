@@ -72,26 +72,37 @@ export const getCurrentUser = async () => {
     return { success: false, message: error.message };
   }
 };
-export const createPublicProfile = async (userId, email, role) => {
+export const createPublicProfile = async (userId, email, role, fullName = '') => {
   try {
     const tableName = role === 'recruiter' ? 'employers' : 'candidate_profiles';
-          
+    
+    const nameParts = fullName.trim().split(/\s+/);
+    const firstName = nameParts[0] || 'Unknown';
+    const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
+
     const { data: existingProfile } = await supabase
       .from(tableName)
-      .select('id')
+      .select('*')
       .eq('id', userId)
       .maybeSingle();
 
     if (!existingProfile) {
-      const { error } = await supabase.from(tableName).insert([
-        { 
-          id: userId, 
-          email: email 
-        }
-      ]);
+      const insertData = role === 'recruiter'
+        ? { id: userId, email: email, companyName: fullName || 'Company Workspace' }
+        : { id: userId, email: email, firstName: firstName, lastName: lastName };
+
+      const { error } = await supabase.from(tableName).insert([insertData]);
       if (error) throw error;
+      
+    } else if (role === 'job_seeker' && (!existingProfile.firstName || !existingProfile.lastName)) {
+      if (fullName) {
+        await supabase.from(tableName).update({ 
+          firstName: firstName, 
+          lastName: lastName 
+        }).eq('id', userId);
+      }
     }
-          
+    
     return { success: true };
   } catch (error) {
     return { success: false, message: error.message };

@@ -34,17 +34,14 @@ app.post('/api/post-job', async (req, res) => {
   const { recruiter_id, title, location, work_type, employment_type, description, requirements } = req.body;
 
   try {
-    // 1. Combine the most important text for the AI to evaluate
     const textToEmbed = `Job Title: ${title}. Work Type: ${work_type}, ${employment_type}. Description: ${description}. Requirements: ${requirements}`;
 
-    // 2. Generate the mathematical vector using Gemini
     const embeddingResult = await ai.models.embedContent({
       model: 'gemini-embedding-2',
       contents: textToEmbed 
     });
     const vectorArray = embeddingResult.embeddings[0].values;
 
-    // 3. Save the job details AND the vector to Supabase
     const { data, error } = await supabase
       .from('job_postings')
       .insert([{
@@ -56,14 +53,13 @@ app.post('/api/post-job', async (req, res) => {
         description,
         requirements,
         status: 'active',
-        job_embedding: vectorArray // <-- This is what enables AI matching
+        job_embedding: vectorArray 
       }])
       .select()
       .single();
 
     if (error) throw new Error(`Database insert failed: ${error.message}`);
 
-    // Return the newly created job back to React
     res.json({ success: true, data: data });
 
   } catch (error) {

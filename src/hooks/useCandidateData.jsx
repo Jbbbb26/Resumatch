@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 
-// Simulates connecting to the Business Layer (Profile & Job Controllers)
 export function useCandidateData() {
   const [user, setUser] = useState({ name: 'Jamie Cruz', email: 'jamie.cruz@email.com', completion: 72, initials: 'JC' });
   const [metrics, setMetrics] = useState({ active: 12, requests: 4, matchScore: 86 });

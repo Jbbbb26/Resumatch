@@ -17,41 +17,149 @@ const hasProfileValue = (value) => {
 const profileCompletion = (profile) => profile ? Math.round((profileFields.filter((field) => hasProfileValue(profile[field])).length / profileFields.length) * 100) : 0;
 const jobText = (job) => [job.title, job.description, job.requirements, job.location, job.work_type, job.employment_type].filter(Boolean).join(" ").toLowerCase();
 
-function JobCard({ job, isSaved, onToggleSave, isDarkMode }) {
+function JobCard({ job, isSaved, onToggleSave, isDarkMode, userId }) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [isApplying, setIsApplying] = useState(false);
+  const [applyStatus, setApplyStatus] = useState(null); 
+
+  const handleApply = async (e) => {
+    e.stopPropagation();
+    if (isApplying || applyStatus === 'success') return;
+
+    setIsApplying(true);
+    setApplyStatus(null);
+
+    try {
+      const { error } = await supabase.from('applications').insert([{
+  candidate_id: userId,
+  job_id: job.id,
+  match_score: job.match || 0,
+  status: 'Applied'
+}]);
+
+      if (error) {
+        if (error.code === '23505') {
+          setApplyStatus('already_applied');
+        } else {
+          throw error;
+        }
+      } else {
+        setApplyStatus('success');
+      }
+    } catch (err) {
+      console.error("Application Error:", err);
+      setApplyStatus('error');
+    } finally {
+      setIsApplying(false);
+    }
+  };
+
+
+  const keywords = ['Design systems', 'B2B SaaS', 'Figma', 'User research', 'Cross-functional leadership', 'A/B testing'];
+
   return (
-    <div className={`flex items-center justify-between gap-4 p-5 rounded-2xl border transition-colors group ${isDarkMode ? 'bg-[#121b27] border-white/5 hover:border-white/10' : 'bg-white border-slate-200 hover:border-slate-300 shadow-sm'}`}>
+    <div className={`overflow-hidden rounded-2xl border transition-all duration-200 ${isDarkMode ? 'bg-[#121b27] border-white/5' : 'bg-white border-slate-200 shadow-sm'}`}>
       
-      <div className="min-w-0">
-        <h3 className={`text-base font-bold group-hover:text-[#ea6036] transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
-          {job.title}
-        </h3>
-        <p className={`text-xs mt-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-          {job.company_name || 'Unknown Company'} · {job.location || 'Location not specified'} · {job.work_type || 'Work type not specified'}
-        </p>
+      <div
+        onClick={() => setIsExpanded(!isExpanded)}
+        className={`flex items-center justify-between gap-4 p-5 cursor-pointer group ${isDarkMode ? 'hover:bg-white/5' : 'hover:bg-slate-50'}`}
+      >
+        <div className="min-w-0 flex-1">
+          <h3 className={`text-base font-bold group-hover:text-[#ea6036] transition-colors ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
+            {job.title}
+          </h3>
+          <p className={`text-xs mt-1 flex items-center flex-wrap gap-1.5 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+            <span className={isDarkMode ? 'text-slate-300' : 'text-slate-700'}>{job.company_name || 'Company Name'}</span>
+            <span>—</span>
+            <span>{job.location || 'Remote'}</span>
+            <span>—</span>
+            <span className="font-semibold">{job.work_type || 'Full-time'}</span>
+          </p>
+
+          {!isExpanded && (
+            <div className="flex gap-2 mt-2.5">
+              <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${isDarkMode ? 'bg-[#1a2636] text-slate-300' : 'bg-slate-100 text-slate-600'}`}>
+                {job.employment_type || 'Full-time'}
+              </span>
+              <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${isDarkMode ? 'bg-[#1a2636] text-slate-300' : 'bg-slate-100 text-slate-600'}`}>
+                {job.work_type || 'Hybrid'}
+              </span>
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center gap-4 text-right shrink-0">
+          <button className={`p-1.5 rounded-lg transition-colors ${isDarkMode ? 'text-slate-400 hover:bg-white/10 hover:text-white' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'}`}>
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>
+          </button>
+
+          <div className={`px-3 py-1.5 rounded-xl border text-center ${isDarkMode ? 'border-[#1b4332] bg-[#0c1a1a]/40' : 'border-emerald-200 bg-emerald-50/50'}`}>
+            <span className="block text-base leading-none font-bold text-[#4fa784]">
+              {job.match != null ? `${job.match}%` : '-'}
+            </span>
+            <span className={`text-[9px] uppercase tracking-wider ${isDarkMode ? 'text-slate-500' : 'text-emerald-700/60'}`}>
+              match score
+            </span>
+          </div>
+
+          <svg className={`w-5 h-5 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''} ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+        </div>
       </div>
 
-      <div className="flex items-center gap-3 text-right shrink-0">
-        <div>
-          {/* Dynamically renders the calculated AI match percentage */}
-          <span className="block text-xl font-bold text-[#4fa784]">
-            {job.match != null ? `${job.match}%` : '—'}
-          </span>
-          <span className={`text-[10px] uppercase tracking-wider ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
-            Match
-          </span>
+      {isExpanded && (
+        <div className={`px-5 pb-5 border-t ${isDarkMode ? 'border-white/5' : 'border-slate-100'}`}>
+          <div className="pt-4 space-y-5">
+
+            <p className={`text-[13px] leading-relaxed ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>
+              {job.description || "Lead end-to-end design for our core platform, owning the design system and mentoring two mid-level designers. We're looking for someone with strong B2B SaaS experience."}
+            </p>
+
+            <div>
+              <h4 className={`text-xs font-bold mb-2 ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>Matched keywords</h4>
+              <div className="flex flex-wrap gap-2">
+                {keywords.map((kw, idx) => (
+                  <span key={idx} className={`px-2.5 py-1 rounded-md text-[11px] font-medium border ${idx > 2 ? (isDarkMode ? 'bg-[#0a121c] border-white/10 text-slate-300' : 'bg-slate-50 border-slate-200 text-slate-600') : (isDarkMode ? 'bg-[#1b4332]/30 border-[#1b4332] text-slate-200' : 'bg-emerald-50 border-emerald-200 text-emerald-800')}`}>
+                    {kw}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3 pt-2">
+              <button
+                onClick={handleApply}
+                disabled={isApplying || applyStatus === 'success' || applyStatus === 'already_applied'}
+                className={`px-4 py-2 text-xs font-bold rounded-lg transition-all shadow-sm ${applyStatus === 'success' || applyStatus === 'already_applied'
+                    ? (isDarkMode ? 'bg-slate-800 text-slate-400 cursor-not-allowed' : 'bg-slate-200 text-slate-500 cursor-not-allowed')
+                    : 'bg-[#4fa784] hover:bg-[#3d8c6d] text-white'
+                  }`}
+              >
+                {isApplying ? 'Applying...'
+                  : applyStatus === 'success' ? 'Applied Successfully'
+                    : applyStatus === 'already_applied' ? 'Already Applied'
+                      : 'One-click apply'}
+              </button>
+
+              <button
+                onClick={(e) => { e.stopPropagation(); onToggleSave(job.id); }}
+                className={`px-4 py-2 text-xs font-bold rounded-lg transition-colors border ${isDarkMode ? 'border-white/10 text-slate-300 hover:bg-[#1a2636]' : 'border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+              >
+                {isSaved ? 'Remove from saved' : 'Save for later'}
+              </button>
+
+              <button className={`px-4 py-2 text-xs font-bold rounded-lg transition-colors border flex items-center gap-1.5 ${isDarkMode ? 'border-white/10 text-slate-300 hover:bg-[#1a2636]' : 'border-slate-300 text-slate-700 hover:bg-slate-100'}`}>
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>
+                Open
+              </button>
+
+              {applyStatus === 'error' && (
+                <span className="text-[11px] text-red-500 font-medium">Failed to submit application.</span>
+              )}
+            </div>
+
+          </div>
         </div>
-        
-        <button 
-          onClick={() => onToggleSave(job.id)} 
-          aria-label={isSaved ? `Remove ${job.title} from saved jobs` : `Save ${job.title}`} 
-          className={`p-2 rounded-xl border transition-colors ${isDarkMode ? 'border-white/5 text-slate-300 hover:bg-[#1a2636]' : 'border-slate-200 text-slate-500 hover:bg-slate-100'}`}
-        >
-          <svg className={`w-5 h-5 ${isSaved ? 'fill-[#ea6036] text-[#ea6036]' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-4-7 4V5z" />
-          </svg>
-        </button>
-      </div>
-      
+      )}
     </div>
   );
 }
@@ -84,19 +192,18 @@ export default function CandidateDashboard() {
       document.documentElement.classList.add('light-mode');
     }
   }, [isDarkMode]);
+
   const loadRecommendations = async (userId) => {
     try {
-      // Call the SQL function we just created
       const { data, error } = await supabase.rpc('get_recommended_jobs', {
         p_candidate_id: userId,
-        match_threshold: 0.4, // Returns anything with a 40% match or higher
-        match_count: 10       // Top 10 jobs
+        match_threshold: 0.4, 
+        match_count: 10       
       });
 
       if (error) throw error;
 
       if (data) {
-        // Convert the raw decimal (e.g., 0.912) into a clean percentage (91)
         const rankedJobs = data.map(job => ({
           ...job,
           match: Math.round(job.similarity * 100)
@@ -108,6 +215,7 @@ export default function CandidateDashboard() {
       setJobsError(err.message);
     }
   };
+
   useEffect(() => {
     const loadUser = async () => {
       try {
@@ -140,7 +248,6 @@ export default function CandidateDashboard() {
             return;
           }
 
-          // Defensively parse the name to prevent array out-of-bounds crashes
           const rawName = metadata.full_name || response.data.email?.split('@')[0] || "Candidate";
           const cleanName = rawName.trim();
           const nameParts = cleanName.split(/\s+/);
@@ -155,9 +262,17 @@ export default function CandidateDashboard() {
             email: response.data.email,
             initials: initials
           });
+          
           await loadRecommendations(response.data.id);
+          
+          const { data: savedData } = await supabase
+            .from('saved_jobs')
+            .select('id, job_posting_id, created_at, job_postings(id, title, location, work_type, employment_type, status, created_at)')
+            .eq('candidate_id', response.data.id);
+            
+          if (savedData) setSavedJobs(savedData);
+
         } else {
-          // If no session exists, kick to login
           navigate('/login');
         }
       } catch (error) {
@@ -170,6 +285,7 @@ export default function CandidateDashboard() {
 
     loadUser();
   }, [navigate]);
+
   const handleLogout = async () => {
     const result = await logoutUser();
     if (result.success) navigate("/login");
@@ -180,7 +296,6 @@ export default function CandidateDashboard() {
     const locationSearch = locationQuery.trim().toLowerCase();
     return jobs.filter((job) => (!titleSearch || jobText(job).includes(titleSearch)) && (!locationSearch || [job.location, job.work_type].filter(Boolean).join(' ').toLowerCase().includes(locationSearch)));
   }, [jobs, titleQuery, locationQuery]);
-
 
   if (isLoading || !user) {
     return (
@@ -240,16 +355,31 @@ export default function CandidateDashboard() {
               <svg className="w-4 h-4 text-slate-500 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
             </div>
             <div className="space-y-3">
-              {jobsError ? <p className="text-sm text-red-500">Unable to load listings: {jobsError}</p> : filteredJobs.length === 0 ? <p className={`p-6 rounded-2xl text-sm ${isDarkMode ? 'bg-[#121b27] text-slate-400' : 'bg-white text-slate-500'}`}>No listings yet — check back soon.</p> : filteredJobs.map((job) => <JobCard key={job.id} job={job} isSaved={savedJobs.some((saved) => saved.job_posting_id === job.id)} onToggleSave={async (jobId) => {
-                const existing = savedJobs.find((saved) => saved.job_posting_id === jobId);
-                if (existing) {
-                  const { error } = await supabase.from('saved_jobs').delete().eq('id', existing.id).eq('candidate_id', user.id);
-                  if (error) setSavedError(error.message); else setSavedJobs((current) => current.filter((saved) => saved.id !== existing.id));
-                } else {
-                  const { data, error } = await supabase.from('saved_jobs').insert([{ candidate_id: user.id, job_posting_id: jobId }]).select('id,job_posting_id,created_at,job_postings(id,title,location,work_type,employment_type,status,created_at)').single();
-                  if (error) setSavedError(error.message); else setSavedJobs((current) => [data, ...current]);
-                }
-              }} isDarkMode={isDarkMode} />)}
+              {jobsError ? (
+                <p className="text-sm text-red-500">Unable to load listings: {jobsError}</p>
+              ) : filteredJobs.length === 0 ? (
+                <p className={`p-6 rounded-2xl text-sm ${isDarkMode ? 'bg-[#121b27] text-slate-400' : 'bg-white text-slate-500'}`}>No listings yet — check back soon.</p>
+              ) : (
+                filteredJobs.map((job) => (
+                  <JobCard 
+                    key={job.id} 
+                    job={job} 
+                    userId={user.id}
+                    isSaved={savedJobs.some((saved) => saved.job_posting_id === job.id)} 
+                    onToggleSave={async (jobId) => {
+                      const existing = savedJobs.find((saved) => saved.job_posting_id === jobId);
+                      if (existing) {
+                        const { error } = await supabase.from('saved_jobs').delete().eq('id', existing.id).eq('candidate_id', user.id);
+                        if (error) setSavedError(error.message); else setSavedJobs((current) => current.filter((saved) => saved.id !== existing.id));
+                      } else {
+                        const { data, error } = await supabase.from('saved_jobs').insert([{ candidate_id: user.id, job_posting_id: jobId }]).select('id,job_posting_id,created_at,job_postings(id,title,location,work_type,employment_type,status,created_at)').single();
+                        if (error) setSavedError(error.message); else setSavedJobs((current) => [data, ...current]);
+                      }
+                    }} 
+                    isDarkMode={isDarkMode} 
+                  />
+                ))
+              )}
             </div>
             <p className={`text-xs mt-4 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
               <button className="text-[#3c8eec] hover:underline">Update your profile</button> to sharpen these recommendations, or use the search bar above.
@@ -259,7 +389,29 @@ export default function CandidateDashboard() {
           <div className="lg:col-span-1">
             <h2 className={`text-lg font-serif mb-4 ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>Saved jobs</h2>
             <div className={`p-5 rounded-2xl border h-[calc(100%-2.5rem)] ${isDarkMode ? 'bg-[#121b27] border-white/5' : 'bg-white border-slate-200 shadow-sm'}`}>
-              <div className="space-y-4 mb-8">{savedError && <p className="text-xs text-red-500">Unable to load saved jobs: {savedError}</p>}{savedJobs.length === 0 ? <p className={`text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Use the save button on each listing to keep it here — accessible from any device.</p> : savedJobs.map((saved) => saved.job_postings && <div key={saved.id} className="flex items-start justify-between gap-3 border-b pb-4 last:border-0"><div><h3 className={`text-sm font-bold ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{saved.job_postings.title}</h3><p className={`text-[11px] mt-0.5 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{saved.job_postings.location || 'Location not specified'} · {saved.job_postings.work_type || 'Work type not specified'}</p></div><button onClick={async () => { const { error } = await supabase.from('saved_jobs').delete().eq('id', saved.id).eq('candidate_id', user.id); if (error) setSavedError(error.message); else setSavedJobs((current) => current.filter((item) => item.id !== saved.id)); }} className="text-xs text-[#ea6036]">Remove</button></div>)}</div>
+              <div className="space-y-4 mb-8">
+                {savedError && <p className="text-xs text-red-500">Unable to load saved jobs: {savedError}</p>}
+                {savedJobs.length === 0 ? (
+                  <p className={`text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Use the save button on each listing to keep it here — accessible from any device.</p>
+                ) : (
+                  savedJobs.map((saved) => saved.job_postings && (
+                    <div key={saved.id} className="flex items-start justify-between gap-3 border-b pb-4 last:border-0">
+                      <div>
+                        <h3 className={`text-sm font-bold ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{saved.job_postings.title}</h3>
+                        <p className={`text-[11px] mt-0.5 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                          {saved.job_postings.location || 'Location not specified'} · {saved.job_postings.work_type || 'Work type not specified'}
+                        </p>
+                      </div>
+                      <button onClick={async () => { 
+                        const { error } = await supabase.from('saved_jobs').delete().eq('id', saved.id).eq('candidate_id', user.id); 
+                        if (error) setSavedError(error.message); else setSavedJobs((current) => current.filter((item) => item.id !== saved.id)); 
+                      }} className="text-xs text-[#ea6036]">
+                        Remove
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
               <p className={`text-[11px] leading-relaxed border-t pt-4 ${isDarkMode ? 'text-slate-500 border-white/5' : 'text-slate-400 border-slate-100'}`}>
                 Use the save button on each job listing to keep it here — accessible from any device.
               </p>
@@ -269,7 +421,6 @@ export default function CandidateDashboard() {
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 lg:gap-8">
           {[
-            // Applications, interviews, and matching are intentionally deferred until their tables and flows exist.
             { value: "0", label: "Active applications" },
             { value: "0", label: "Interview requests" },
             { value: "—", label: "Average match score" }
@@ -282,7 +433,7 @@ export default function CandidateDashboard() {
         </div>
       </main>
 
-      {isFilterModalOpen && <FilterModal onClose={() => setFilterModalOpen(false)} />}
+      {isFilterModalOpen && <FilterModal onClose={() => setFilterModalOpen(false)} isDarkMode={isDarkMode} />}
       {isProfileModalOpen && (
         <ProfileModal
           user={user}

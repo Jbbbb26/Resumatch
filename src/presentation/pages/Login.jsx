@@ -51,8 +51,12 @@ export default function Login() {
             setVerifying(false);
             return;
           } else {
+            const googleName = response.data.user_metadata?.full_name || response.data.user_metadata?.name || '';
+            
             await updateUserMetadata({ role: intendedRole });
-            await createPublicProfile(response.data.id, response.data.email, intendedRole);
+            
+            await createPublicProfile(response.data.id, response.data.email, intendedRole, googleName);
+            
             userRole = intendedRole; 
             sessionStorage.clear();
           }
