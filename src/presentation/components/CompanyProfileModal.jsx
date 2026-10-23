@@ -22,6 +22,8 @@ export const CompanyProfileModal = ({ user, onClose, isDarkMode = true }) => {
         .from('job_postings')
         .select('*')
         .eq('recruiter_id', user.id)
+        .eq('is_archived', false)
+        .eq('hiring_status', 'open')
         .order('created_at', { ascending: false });
       if (data) setJobs(data);
     };

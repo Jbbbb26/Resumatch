@@ -3,6 +3,7 @@ import Login from './presentation/pages/Login';
 import Signup from './presentation/pages/Signup';
 import CandidateDashboard from './presentation/pages/CandidateDashboard'; 
 import RecruiterDashboard from './presentation/pages/RecruiterDashboard'; 
+import JobDetailsPage from './presentation/pages/JobDetailsPage';
 // You can remove the generic Dashboard import if you no longer need it
 
 export default function App() {
@@ -17,6 +18,7 @@ export default function App() {
 
         {/* Role-specific Dashboards */}
         <Route path="/candidate-dashboard" element={<CandidateDashboard />} />
+        <Route path="/candidate-dashboard/jobs/:jobId" element={<JobDetailsPage />} />
         <Route path="/recruiter-dashboard" element={<RecruiterDashboard />} />
       </Routes>
     </BrowserRouter>

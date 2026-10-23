@@ -41,7 +41,9 @@ export const loginWithGoogle = async (redirectToPath = '/candidate-dashboard') =
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: `http://localhost:5173${redirectToPath}`, 
+        // Works locally (http://localhost:5173) and on Vercel. Add both URLs under
+        // Supabase > Authentication > URL Configuration > Redirect URLs.
+        redirectTo: `${window.location.origin}${redirectToPath}`,
       }
     });
 
@@ -158,4 +160,4 @@ export const updatePassword = async (newPassword) => {
   } catch (error) {
     return { success: false, message: error.message };
   }
-};
+};

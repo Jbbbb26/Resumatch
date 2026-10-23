@@ -1,7 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
 import AppIcon from '../../../assets/Icon.png';
 
-export const TopHeader = ({ user, isDarkMode, toggleTheme, openProfile, logout }) => {
+// openApplications: when provided (candidate view) the "Applications" menu item is shown.
+// Recruiters don't pass it, so the item is hidden for them.
+export const TopHeader = ({ user, isDarkMode, toggleTheme, openProfile, logout, openApplications, applicationsCount }) => {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const dropdownRef = useRef(null);
 
@@ -66,13 +68,20 @@ export const TopHeader = ({ user, isDarkMode, toggleTheme, openProfile, logout }
                 </div>
                 
                 <div className={`py-2 border-b space-y-1 ${isDarkMode ? 'border-white/5' : 'border-slate-100'}`}>
-                  <button className={`w-full px-5 py-2.5 flex items-center justify-between transition-colors group ${isDarkMode ? 'hover:bg-white/5' : 'hover:bg-slate-50'}`}>
+                  {openApplications && (
+                  <button
+                    onClick={() => {
+                      setIsDropdownOpen(false);
+                      openApplications();
+                    }}
+                    className={`w-full px-5 py-2.5 flex items-center justify-between transition-colors group ${isDarkMode ? 'hover:bg-white/5' : 'hover:bg-slate-50'}`}>
                     <div className={`flex items-center gap-3 text-sm group-hover:text-current ${isDarkMode ? 'text-slate-200 group-hover:text-white' : 'text-slate-700 group-hover:text-slate-900'}`}>
                       <svg className={`w-4 h-4 ${isDarkMode ? 'text-slate-400 group-hover:text-slate-300' : 'text-slate-500 group-hover:text-slate-600'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"></path></svg>
                       Applications
                     </div>
-                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-md ${isDarkMode ? 'text-slate-300 bg-[#1a2636]' : 'text-slate-700 bg-slate-100'}`}>12</span>
+                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-md ${isDarkMode ? 'text-slate-300 bg-[#1a2636]' : 'text-slate-700 bg-slate-100'}`}>{applicationsCount ?? 0}</span>
                   </button>
+                  )}
                   
                   <button 
                     onClick={() => {
@@ -105,4 +114,4 @@ export const TopHeader = ({ user, isDarkMode, toggleTheme, openProfile, logout }
       </div>
     </header>
   );
-};
+};

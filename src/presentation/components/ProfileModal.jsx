@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../../../supabaseClient.js';
+import { apiFetch } from '../../data/services/apiClient';
 
 // FIXED: Added isRecruiterView to the props
 export const ProfileModal = ({ user, onClose, isDarkMode = true, isRecruiterView = false }) => {
@@ -12,6 +13,9 @@ export const ProfileModal = ({ user, onClose, isDarkMode = true, isRecruiterView
   const [isParsing, setIsParsing] = useState(false);
   const [pendingFile, setPendingFile] = useState(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [resumeError, setResumeError] = useState('');
   
   const fileInputRef = useRef(null);
   
@@ -116,6 +120,7 @@ export const ProfileModal = ({ user, onClose, isDarkMode = true, isRecruiterView
     if (!file) return;
 
     setIsUploading(true);
+    setResumeError('');
 
     if (resumeData) {
       setResumeData(prev => ({ ...prev, status: "Replacing..." }));
@@ -147,24 +152,71 @@ export const ProfileModal = ({ user, onClose, isDarkMode = true, isRecruiterView
     setIsUploading(false);
     setIsParsing(true);
 
-    fetch('http://localhost:3000/api/parse-resume', {
+    apiFetch('/api/parse-resume', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ userId: user.id, fileName: fileName })
     })
-      .then(res => res.json())
       .then(result => {
         if (result.success && result.data) {
           setExperiences(result.data.experience || []);
           setSkills(result.data.skills || []);
           setEducation(result.data.education || []);
+        } else {
+          setResumeError(result.error || result.message || 'Resume uploaded, but AI parsing failed.');
         }
       })
-      .catch(err => console.error("Backend parsing error:", err))
       .finally(() => {
         setIsParsing(false);
         setPendingFile(null);
       });
+  };
+
+  // Delete Resume: removes the user's file(s) from storage and clears resume-derived
+  // fields in candidate_profiles. Profile links are kept.
+  const confirmDeleteResume = async () => {
+    setIsDeleting(true);
+    setResumeError('');
+
+    const { data: files, error: listError } = await supabase.storage.from('resumes').list('', { search: user.id });
+    if (listError) {
+      setResumeError(`Could not delete resume: ${listError.message}`);
+      setIsDeleting(false);
+      setShowDeleteModal(false);
+      return;
+    }
+    const names = (files || []).map((f) => f.name).filter((name) => name.startsWith(user.id));
+    if (names.length) {
+      const { error: removeError } = await supabase.storage.from('resumes').remove(names);
+      if (removeError) {
+        setResumeError(`Could not delete resume: ${removeError.message}`);
+        setIsDeleting(false);
+        setShowDeleteModal(false);
+        return;
+      }
+    }
+
+    const { error: updateError } = await supabase
+      .from('candidate_profiles')
+      .update({
+        resume_data: { experience: [], education: [], skills: [], links },
+        skills: null,
+        experience: null,
+        resume_embedding: null,
+        resume_status: null,
+        last_synced: null,
+      })
+      .eq('id', user.id);
+    if (updateError) {
+      setResumeError(`File removed, but profile could not be cleared: ${updateError.message}`);
+    }
+
+    setResumeData(null);
+    setExperiences([]);
+    setEducation([]);
+    setSkills([]);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    setIsDeleting(false);
+    setShowDeleteModal(false);
   };
 
   const handleFinalSaveAndClose = async () => {
@@ -383,6 +435,16 @@ export const ProfileModal = ({ user, onClose, isDarkMode = true, isRecruiterView
                         Replace
                       </button>
                     )}
+                    {!isPreviewMode && !isRecruiterView && (
+                      <button
+                        onClick={() => setShowDeleteModal(true)}
+                        disabled={isUploading || isDeleting || isParsing}
+                        className={`flex-1 sm:flex-none px-4 py-2 text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 transition-colors border disabled:opacity-50 disabled:cursor-not-allowed ${isDarkMode ? 'border-red-900/50 text-red-400 hover:bg-red-900/20' : 'border-red-200 text-red-600 hover:bg-red-50'}`}
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                        Delete Resume
+                      </button>
+                    )}
                   </div>
                 </>
               ) : (
@@ -401,6 +463,7 @@ export const ProfileModal = ({ user, onClose, isDarkMode = true, isRecruiterView
               )}
             </div>
           </div>
+          {resumeError && <p className="-mt-3 text-xs font-medium text-red-500">{resumeError}</p>}
           <input
             type="file"
             accept=".pdf,.doc,.docx"
@@ -678,6 +741,34 @@ export const ProfileModal = ({ user, onClose, isDarkMode = true, isRecruiterView
           </div>
         </div>
       )}
+
+      {showDeleteModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div className={`absolute inset-0 backdrop-blur-sm transition-opacity ${isDarkMode ? 'bg-[#04080e]/90' : 'bg-slate-900/50'}`} onClick={() => !isDeleting && setShowDeleteModal(false)}></div>
+          <div className={`relative w-full max-w-sm p-6 rounded-2xl shadow-2xl z-10 ${isDarkMode ? 'bg-[#0d1622] border border-[#1b2b3b]' : 'bg-white border border-slate-200'}`}>
+            <h3 className={`text-lg font-bold mb-2 ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>Delete Resume?</h3>
+            <p className={`text-sm mb-6 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+              This permanently removes <span className={`font-semibold ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>{resumeData?.name}</span> and clears the experience, education and skills extracted from it. Your job recommendations will be empty until you upload a new resume.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setShowDeleteModal(false)}
+                disabled={isDeleting}
+                className={`px-4 py-2 text-sm font-semibold rounded-xl border transition-colors ${isDarkMode ? 'bg-transparent border-white/10 text-slate-300 hover:bg-white/5' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'}`}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDeleteResume}
+                disabled={isDeleting}
+                className="px-5 py-2 text-sm font-bold rounded-xl bg-red-600 hover:bg-red-700 text-white shadow-md transition-all disabled:opacity-60"
+              >
+                {isDeleting ? 'Deleting...' : 'Yes, Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
-};
+};

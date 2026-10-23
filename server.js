@@ -7,8 +7,28 @@ import { GoogleGenAI } from '@google/genai';
 dotenv.config();
 
 const app = express();
-app.use(cors());
+// CORS: only the frontend origins listed in CORS_ORIGINS may call the API.
+// Comma-separated; an entry starting with "*." matches any subdomain, e.g.
+// CORS_ORIGINS=https://resumatch.vercel.app,*.vercel.app,http://localhost:5173
+// If CORS_ORIGINS is empty every origin is allowed (convenient for local dev only).
+const allowedOrigins = (process.env.CORS_ORIGINS || '').split(',').map((o) => o.trim().replace(/\/$/, '')).filter(Boolean);
+const isAllowedOrigin = (origin) => allowedOrigins.some((allowed) =>
+  allowed.startsWith('*.') ? new URL(origin).hostname.endsWith(allowed.slice(1)) : origin === allowed);
+
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.length === 0 || isAllowedOrigin(origin)) return callback(null, true);
+    callback(new Error(`Origin ${origin} is not allowed by CORS`));
+  },
+}));
 app.use(express.json());
+
+const REQUIRED_ENV = ['SUPABASE_URL', 'SUPABASE_SERVICE_KEY', 'GEMINI_API_KEY'];
+const missingEnv = REQUIRED_ENV.filter((name) => !process.env[name]);
+if (missingEnv.length) {
+  console.error(`Missing environment variables: ${missingEnv.join(', ')}. Set them in Railway > Variables (or .env locally).`);
+  process.exit(1);
+}
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -16,6 +36,50 @@ const supabase = createClient(
 );
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+
+// Verifies the Supabase access token sent by the frontend (Authorization: Bearer <token>)
+// and attaches the signed-in user to req.user.
+const requireUser = async (req, res, next) => {
+  const token = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  if (!token) return res.status(401).json({ success: false, message: 'Please sign in again.' });
+
+  const { data, error } = await supabase.auth.getUser(token);
+  if (error || !data?.user) return res.status(401).json({ success: false, message: 'Your session has expired. Please sign in again.' });
+
+  req.user = data.user;
+  next();
+};
+
+const requireRecruiter = (req, res, next) => {
+  if (req.user?.user_metadata?.role !== 'recruiter') {
+    return res.status(403).json({ success: false, message: 'Only recruiter accounts can manage job listings.' });
+  }
+  next();
+};
+
+const JOB_FIELDS = ['title', 'location', 'work_type', 'employment_type', 'description', 'requirements'];
+const HIRING_STATUSES = ['open', 'closed'];
+
+const pickJobFields = (body) => {
+  const job = {};
+  for (const field of JOB_FIELDS) {
+    if (typeof body[field] === 'string') job[field] = body[field].trim();
+  }
+  return job;
+};
+
+const embedJob = async ({ title, work_type, employment_type, description, requirements }) => {
+  const textToEmbed = `Job Title: ${title}. Work Type: ${work_type}, ${employment_type}. Description: ${description || ''}. Requirements: ${requirements || ''}`;
+  const embeddingResult = await ai.models.embedContent({
+    model: 'gemini-embedding-2',
+    contents: textToEmbed
+  });
+  return embeddingResult.embeddings[0].values;
+};
+// Health check (Railway uses this to know the deploy is up).
+app.get('/', (req, res) => res.send('ResuMatch API is running.'));
+app.get('/api/health', (req, res) => res.json({ ok: true }));
+
 app.post('/api/login', async (req, res) => {
   const { email, password } = req.body;
   
@@ -30,30 +94,24 @@ app.post('/api/login', async (req, res) => {
   
   res.json({ success: true, data: data });
 });
-app.post('/api/post-job', async (req, res) => {
-  const { recruiter_id, title, location, work_type, employment_type, description, requirements } = req.body;
+app.post('/api/post-job', requireUser, requireRecruiter, async (req, res) => {
+  const job = pickJobFields(req.body);
+  if (!job.title) return res.status(400).json({ success: false, message: 'Job title is required.' });
 
   try {
-    const textToEmbed = `Job Title: ${title}. Work Type: ${work_type}, ${employment_type}. Description: ${description}. Requirements: ${requirements}`;
-
-    const embeddingResult = await ai.models.embedContent({
-      model: 'gemini-embedding-2',
-      contents: textToEmbed 
-    });
-    const vectorArray = embeddingResult.embeddings[0].values;
+    const vectorArray = await embedJob(job);
 
     const { data, error } = await supabase
       .from('job_postings')
       .insert([{
-        recruiter_id,
-        title,
-        location,
-        work_type,
-        employment_type,
-        description,
-        requirements,
+        ...job,
+        recruiter_id: req.user.id, // taken from the verified token, not the request body
         status: 'active',
-        job_embedding: vectorArray 
+        hiring_status: 'open',
+        is_archived: false,
+        archived_at: null,
+        closed_at: null,
+        job_embedding: vectorArray
       }])
       .select()
       .single();
@@ -67,8 +125,123 @@ app.post('/api/post-job', async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 });
-app.post('/api/parse-resume', async (req, res) => {
+
+// Recruiters can filter their own listings; archived jobs are excluded by default.
+app.get('/api/jobs', requireUser, requireRecruiter, async (req, res) => {
+  const status = req.query.status || 'all';
+  if (!['open', 'closed', 'archived', 'all'].includes(status)) {
+    return res.status(400).json({ success: false, message: 'Status must be open, closed, archived, or all.' });
+  }
+
+  try {
+    let query = supabase
+      .from('job_postings')
+      .select('*')
+      .eq('recruiter_id', req.user.id)
+      .order('created_at', { ascending: false });
+
+    if (status === 'open') query = query.eq('is_archived', false).eq('hiring_status', 'open');
+    if (status === 'closed') query = query.eq('is_archived', false).eq('hiring_status', 'closed');
+    if (status === 'archived') query = query.eq('is_archived', true);
+    if (status === 'all') query = query.eq('is_archived', false);
+
+    const { data, error } = await query;
+    if (error) throw new Error(`Database query failed: ${error.message}`);
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error('Job List Error:', error);
+    res.status(500).json({ success: false, message: 'Unable to load job listings.' });
+  }
+});
+
+const updateOwnedJob = async (req, res, updates, operation, requireUnarchived = false) => {
+  try {
+    let query = supabase
+      .from('job_postings')
+      .update(updates)
+      .eq('id', req.params.id)
+      .eq('recruiter_id', req.user.id);
+    if (requireUnarchived) query = query.eq('is_archived', false);
+    const { data, error } = await query.select().maybeSingle();
+
+    if (error) throw new Error(error.message);
+    if (!data) return res.status(404).json({ success: false, message: 'Job listing not found or it must be restored first.' });
+    return res.json({ success: true, data });
+  } catch (error) {
+    console.error(`${operation} Error:`, error);
+    return res.status(500).json({ success: false, message: `Unable to ${operation.toLowerCase()} this listing.` });
+  }
+};
+
+app.patch('/api/jobs/:id/archive', requireUser, requireRecruiter, async (req, res) => {
+  return updateOwnedJob(req, res, { is_archived: true, archived_at: new Date().toISOString() }, 'Archive Job');
+});
+
+app.patch('/api/jobs/:id/restore', requireUser, requireRecruiter, async (req, res) => {
+  return updateOwnedJob(req, res, { is_archived: false, archived_at: null }, 'Restore Job');
+});
+
+app.patch('/api/jobs/:id/hiring-status', requireUser, requireRecruiter, async (req, res) => {
+  const { hiringStatus } = req.body || {};
+  if (!HIRING_STATUSES.includes(hiringStatus)) {
+    return res.status(400).json({ success: false, message: 'Hiring status must be open or closed.' });
+  }
+
+  const updates = {
+    hiring_status: hiringStatus,
+    closed_at: hiringStatus === 'closed' ? new Date().toISOString() : null,
+  };
+  return updateOwnedJob(req, res, updates, 'Update Hiring Status', true);
+});
+
+// Edit an existing job listing. Only the recruiter who owns it can update it.
+// The match vector is regenerated so candidate match scores reflect the new details.
+app.put('/api/jobs/:id', requireUser, requireRecruiter, async (req, res) => {
+  const updates = pickJobFields(req.body);
+  if ('title' in updates && !updates.title) {
+    return res.status(400).json({ success: false, message: 'Job title is required.' });
+  }
+
+  try {
+    const { data: existing, error: findError } = await supabase
+      .from('job_postings')
+      .select('*')
+      .eq('id', req.params.id)
+      .maybeSingle();
+
+    if (findError) throw new Error(findError.message);
+    if (!existing) return res.status(404).json({ success: false, message: 'Job listing not found.' });
+    if (existing.recruiter_id !== req.user.id) {
+      return res.status(403).json({ success: false, message: 'You can only edit your own listings.' });
+    }
+
+    const merged = { ...existing, ...updates };
+    const textChanged = ['title', 'work_type', 'employment_type', 'description', 'requirements']
+      .some((field) => field in updates && updates[field] !== existing[field]);
+    if (textChanged) updates.job_embedding = await embedJob(merged);
+
+    const { data, error } = await supabase
+      .from('job_postings')
+      .update(updates)
+      .eq('id', req.params.id)
+      .eq('recruiter_id', req.user.id)
+      .select()
+      .single();
+
+    if (error) throw new Error(`Database update failed: ${error.message}`);
+
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error("Job Update Error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+app.post('/api/parse-resume', requireUser, async (req, res) => {
   const { userId, fileName } = req.body;
+  if (userId !== req.user.id || !String(fileName || '').startsWith(req.user.id)) {
+    return res.status(403).json({ success: false, error: 'You can only parse your own resume.' });
+  }
   console.log(`Processing file: ${fileName} for user: ${userId}`);
 
   try {
@@ -177,4 +350,4 @@ console.log("Structured Data:", JSON.stringify(structuredData, null, 2));
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Backend AI Server running on port ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`Backend AI Server running on port ${PORT}`));
