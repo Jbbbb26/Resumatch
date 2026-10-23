@@ -1,19 +1,64 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../../../supabaseClient.js';
 
+// Accept only normal website links (never javascript:, data:, etc.).
+const validCompanyWebsite = (value) => {
+  if (!value || !value.trim()) return '';
+  const trimmed = value.trim();
+  const candidate = /^[a-z][a-z0-9+.-]*:/i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  try {
+    const url = new URL(candidate);
+    return ['http:', 'https:'].includes(url.protocol) ? url.href : null;
+  } catch {
+    return null;
+  }
+};
+
 export const CompanyProfileModal = ({ user, onClose, isDarkMode = true }) => {
   const [activeTab, setActiveTab] = useState('about');
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [jobs, setJobs] = useState([]);
   
+  const [isLoadingProfile, setIsLoadingProfile] = useState(true);
+  const [profileError, setProfileError] = useState('');
+  const [profileSuccess, setProfileSuccess] = useState('');
+  const [companyExists, setCompanyExists] = useState(false);
   const [companyData, setCompanyData] = useState({
-    website: '',
-    industry: 'Business Support Services',
-    size: '51-100',
-    location: 'Makati, Metro Manila, Philippines',
-    description: 'Established and managed by professionals with over 50 years of combined management experience in Information Technology, Human Resource, Sales, and Marketing disciplines.'
+    companyName: '', website: '', industry: '', size: '', location: '', description: ''
   });
+
+  // Load saved company details every time the recruiter opens this modal.
+  useEffect(() => {
+    let active = true;
+    const fetchCompany = async () => {
+      if (!user?.id) { if (active) setIsLoadingProfile(false); return; }
+      setIsLoadingProfile(true);
+      setProfileError('');
+      const { data, error } = await supabase
+        .from('employers')
+        .select('id, companyName, website, industry, size, location, description')
+        .eq('id', user.id)
+        .maybeSingle();
+      if (!active) return;
+      if (error) {
+        setProfileError(`Could not load company profile: ${error.message}`);
+      } else {
+        setCompanyExists(Boolean(data));
+        setCompanyData({
+          companyName: data?.companyName || user?.name || '',
+          website: data?.website || '',
+          industry: data?.industry || '',
+          size: data?.size || '',
+          location: data?.location || '',
+          description: data?.description || ''
+        });
+      }
+      setIsLoadingProfile(false);
+    };
+    fetchCompany();
+    return () => { active = false; };
+  }, [user?.id, user?.name]);
 
   useEffect(() => {
     const fetchJobs = async () => {
@@ -31,11 +76,50 @@ export const CompanyProfileModal = ({ user, onClose, isDarkMode = true }) => {
   }, [user?.id]);
 
   const handleSave = async () => {
+    if (!user?.id) { setProfileError('Please sign in again before saving.'); return; }
+    if (!companyData.companyName.trim()) {
+      setProfileError('Company name is required.');
+      return;
+    }
+    const website = validCompanyWebsite(companyData.website);
+    if (website === null) {
+      setProfileError('Enter a valid website URL (https://example.com).');
+      return;
+    }
+    const details = {
+      companyName: companyData.companyName.trim(),
+      website,
+      industry: companyData.industry.trim(),
+      size: companyData.size.trim(),
+      location: companyData.location.trim(),
+      description: companyData.description.trim(),
+    };
     setIsSaving(true);
-    setTimeout(() => {
-      setIsSaving(false);
+    setProfileError('');
+    setProfileSuccess('');
+    try {
+      // The employer row normally exists from login/sign-up. Insert it if missing.
+      // Only the currently signed-in employer's ID is used.
+      const request = companyExists
+        ? supabase.from('employers').update(details).eq('id', user.id)
+        : supabase.from('employers').insert({ id: user.id, email: user.email, ...details });
+      const { data, error } = await request
+        .select('id, companyName, website, industry, size, location, description')
+        .single();
+      if (error) throw error;
+      setCompanyExists(true);
+      setCompanyData({
+        companyName: data.companyName || '', website: data.website || '',
+        industry: data.industry || '', size: data.size || '',
+        location: data.location || '', description: data.description || ''
+      });
       setIsEditing(false);
-    }, 800);
+      setProfileSuccess('Company profile saved successfully.');
+    } catch (error) {
+      setProfileError(`Could not save company profile: ${error.message}`);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleOverlayClick = (e) => {
@@ -63,18 +147,15 @@ export const CompanyProfileModal = ({ user, onClose, isDarkMode = true }) => {
           
           <div className="flex items-center gap-5">
             <div className={`w-16 h-16 rounded-2xl flex items-center justify-center text-2xl font-bold shadow-sm transition-colors ${isDarkMode ? 'bg-[#0a121c] border border-white/10 text-white' : 'bg-white border border-slate-200 text-slate-900'}`}>
-              {user?.initials || 'CO'}
+              {(companyData.companyName || user?.name || 'CO').trim().split(/\s+/).slice(0, 2).map((word) => word[0]).join('').toUpperCase()}
             </div>
             <div>
               <h1 className={`text-2xl font-serif font-bold ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
-                {user?.name || 'Company Workspace'}
+                {companyData.companyName || user?.name || 'Company Workspace'}
               </h1>
-              <div className={`flex items-center gap-2 mt-1.5 text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-                <span className="flex items-center gap-1">
-                  <svg className="w-4 h-4 text-[#ea6036]" fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"></path></svg>
-                  4.8 (5 reviews)
-                </span>
-              </div>
+              <p className={`mt-1.5 text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                Company profile
+              </p>
             </div>
           </div>
         </div>
@@ -95,14 +176,18 @@ export const CompanyProfileModal = ({ user, onClose, isDarkMode = true }) => {
         {/* Content Area */}
         <div className="flex-1 overflow-y-auto p-6 sm:p-8">
           
+          {isLoadingProfile && <p role="status" className="mb-4 text-sm text-slate-500">Loading saved company details...</p>}
+          {profileError && <p role="alert" className="mb-4 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">{profileError}</p>}
+          {profileSuccess && <p role="status" className="mb-4 rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{profileSuccess}</p>}
+
           {/* ABOUT TAB */}
           {activeTab === 'about' && (
             <div className="space-y-8 animate-in fade-in duration-300">
               <div className="flex items-center justify-between">
                 <h2 className={`text-xl font-serif font-bold ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>Company overview</h2>
                 <button
-                  onClick={() => isEditing ? handleSave() : setIsEditing(true)}
-                  disabled={isSaving}
+                  onClick={() => { if (isEditing) handleSave(); else { setProfileError(''); setProfileSuccess(''); setIsEditing(true); } }}
+                  disabled={isSaving || isLoadingProfile}
                   className={`px-5 py-2 text-xs font-bold rounded-xl transition-all shadow-sm flex items-center gap-2 ${isEditing ? 'bg-[#4fa784] hover:bg-[#3d8c6d] text-white' : `border ${isDarkMode ? 'bg-[#1a2636] hover:bg-[#233348] border-white/10 text-slate-300' : 'bg-white hover:bg-slate-50 border-slate-300 text-slate-700'}`}`}
                 >
                   {isSaving ? 'Saving...' : isEditing ? 'Save Details' : 'Edit Profile'}
@@ -111,6 +196,7 @@ export const CompanyProfileModal = ({ user, onClose, isDarkMode = true }) => {
 
               {isEditing ? (
                 <div className="grid gap-6 sm:grid-cols-2">
+                  <div><label className={labelClass}>Company Name</label><input value={companyData.companyName} onChange={e => updateField('companyName', e.target.value)} required className={inputClass} /></div>
                   <div><label className={labelClass}>Website</label><input value={companyData.website} onChange={e => updateField('website', e.target.value)} placeholder="https://..." className={inputClass} /></div>
                   <div><label className={labelClass}>Industry</label><input value={companyData.industry} onChange={e => updateField('industry', e.target.value)} className={inputClass} /></div>
                   <div><label className={labelClass}>Company Size</label><input value={companyData.size} onChange={e => updateField('size', e.target.value)} placeholder="e.g. 51-100" className={inputClass} /></div>
@@ -121,7 +207,7 @@ export const CompanyProfileModal = ({ user, onClose, isDarkMode = true }) => {
                 <div className="space-y-6">
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-y-4 gap-x-8">
                     <div className="sm:col-span-1 text-sm font-bold text-slate-500">Website</div>
-                    <div className={`sm:col-span-2 text-sm font-medium ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{companyData.website ? <a href={companyData.website} target="_blank" rel="noreferrer" className="text-indigo-500 hover:underline">{companyData.website}</a> : 'Not provided'}</div>
+                    <div className={`sm:col-span-2 text-sm font-medium ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{validCompanyWebsite(companyData.website) ? <a href={validCompanyWebsite(companyData.website)} target="_blank" rel="noopener noreferrer" className="text-indigo-500 hover:underline">{companyData.website}</a> : 'Not provided'}</div>
                     
                     <div className="sm:col-span-1 text-sm font-bold text-slate-500">Industry</div>
                     <div className={`sm:col-span-2 text-sm font-medium ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{companyData.industry || '-'}</div>
@@ -156,7 +242,7 @@ export const CompanyProfileModal = ({ user, onClose, isDarkMode = true }) => {
                      <div className="flex justify-between items-start mb-3">
                        <div>
                          <h3 className={`font-bold text-base ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{job.title}</h3>
-                         <p className={`text-xs mt-0.5 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{user?.name} • {job.location}</p>
+                         <p className={`text-xs mt-0.5 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{companyData.companyName || user?.name} • {job.location}</p>
                        </div>
                      </div>
                      <p className={`text-xs line-clamp-2 leading-relaxed mb-4 ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>

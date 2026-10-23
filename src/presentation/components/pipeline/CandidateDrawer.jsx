@@ -46,7 +46,12 @@ export function CandidateDrawer({ application, isDarkMode, onClose, onSaveNotes 
     return () => { cancelled = true; };
   }, [application.id, application.stage_updated_at]);
 
-  const resumeValue = person.candidate.resumeFileUrl || person.candidate.resume_file_url;
+  // The Quick Apply confirmation saves the profile data at the time of submission.
+  // Prefer the submitted resume reference, falling back to older profile records.
+  const submittedDetails = application.applicant_details && typeof application.applicant_details === 'object'
+    ? application.applicant_details : null;
+  const resumeValue = submittedDetails?.resumeFilePath || submittedDetails?.resumeFileUrl
+    || person.candidate.resumeFileUrl || person.candidate.resume_file_url;
   const resumeUrl = resumeValue
     ? (/^https?:\/\//i.test(resumeValue)
       ? resumeValue
@@ -103,6 +108,33 @@ export function CandidateDrawer({ application, isDarkMode, onClose, onSaveNotes 
             )}
             {!resumeUrl && <p className={`mt-3 text-xs ${muted}`}>No resume link is available on this profile.</p>}
           </section>
+
+          {submittedDetails && (
+            <section className={`rounded-2xl border p-4 ${card}`}>
+              <h3 className={`mb-3 text-xs font-bold uppercase tracking-wider ${muted}`}>Information submitted with application</h3>
+              <dl className="space-y-2 text-sm">
+                {submittedDetails.fullName && <div><dt className={muted}>Full name</dt><dd className={heading}>{submittedDetails.fullName}</dd></div>}
+                {submittedDetails.email && <div><dt className={muted}>Email</dt><dd className={`${heading} break-all`}>{submittedDetails.email}</dd></div>}
+                {submittedDetails.phone && <div><dt className={muted}>Phone</dt><dd className={heading}>{submittedDetails.phone}</dd></div>}
+                {submittedDetails.location && <div><dt className={muted}>Location</dt><dd className={heading}>{submittedDetails.location}</dd></div>}
+                {Array.isArray(submittedDetails.education) && submittedDetails.education.length > 0 && (
+                  <div><dt className={muted}>Education</dt><dd className={heading}>
+                    {submittedDetails.education.map((entry, index) => (
+                      <p key={index}>{[entry.degreeLevel, entry.fieldOfStudy, entry.school, entry.yearGraduated].filter(Boolean).join(' · ')}</p>
+                    ))}
+                  </dd></div>
+                )}
+                {Array.isArray(submittedDetails.skills) && submittedDetails.skills.length > 0 && (
+                  <div><dt className={muted}>Skills</dt><dd className={heading}>{submittedDetails.skills.join(', ')}</dd></div>
+                )}
+                {submittedDetails.summary && <div><dt className={muted}>Summary</dt><dd className={heading}>{submittedDetails.summary}</dd></div>}
+                {submittedDetails.profileUrl && <div><dt className={muted}>Portfolio</dt><dd className="break-all"><a className="text-[#ea6036] hover:underline" href={submittedDetails.profileUrl} target="_blank" rel="noopener noreferrer">Open profile</a></dd></div>}
+              </dl>
+              {(submittedDetails.resumeFileName || submittedDetails.resumeFilePath) && (
+                <p className={`mt-3 text-xs ${muted}`}>Submitted resume reference: {submittedDetails.resumeFileName || submittedDetails.resumeFilePath}</p>
+              )}
+            </section>
+          )}
 
           <section className={`rounded-2xl border p-4 ${card}`}>
             <label htmlFor="pipeline-candidate-notes" className={`mb-2 block text-xs font-bold uppercase tracking-wider ${muted}`}>Recruiter notes</label>

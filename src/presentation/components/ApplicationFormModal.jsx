@@ -1,317 +1,257 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  APPLICATION_FORM_SECTIONS,
-  createApplicationForm,
-  createEmptyEducation,
-  createEmptyLanguage,
-  createEmptyQualification,
-} from '../../data/applicationForm';
-import { RepeatableRows } from './RepeatableRows';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { supabase } from '../../../supabaseClient.js';
+import { createApplicationForm } from '../../data/applicationForm';
 
-const currentYear = new Date().getFullYear();
-const validYear = (value) => {
-  const year = Number(value);
-  return Number.isInteger(year) && year >= 1950 && year <= currentYear + 5;
-};
+const hasText = (value) => typeof value === 'string' && value.trim().length > 0;
+const emailLooksValid = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || ''));
+const phoneLooksValid = (value) => /^\+?[0-9\s().-]{7,20}$/.test(String(value || '').trim());
 
-function validateApplication(form) {
-  const errors = {};
-  const required = ['fullName', 'email', 'phone', 'location'];
-  required.forEach((field) => { if (!String(form[field] || '').trim()) errors[field] = 'This field is required.'; });
-  if (form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) errors.email = 'Enter a valid email address.';
-  if (form.phone && !/^\+?[0-9\s().-]{7,20}$/.test(form.phone.trim())) errors.phone = 'Enter a valid phone number.';
-  if (form.summary.length > 500) errors.summary = 'Use 500 characters or fewer.';
-  if (!form.education.length) errors['education.0.degreeLevel'] = 'Add at least one education entry.';
-  form.education.forEach((row, index) => {
-    ['degreeLevel', 'fieldOfStudy', 'school', 'yearGraduated'].forEach((field) => {
-      if (!String(row[field] || '').trim()) errors[`education.${index}.${field}`] = 'This field is required.';
-    });
-    if (row.yearGraduated && !validYear(row.yearGraduated)) errors[`education.${index}.yearGraduated`] = `Enter a year from 1950 to ${currentYear + 5}.`;
-  });
-  form.qualifications.forEach((row, index) => {
-    if (row.yearObtained && !validYear(row.yearObtained)) errors[`qualifications.${index}.yearObtained`] = `Enter a year from 1950 to ${currentYear + 5}.`;
-  });
-  if (form.skills.length > 15) errors.skills = 'Add no more than 15 skills.';
-  if (!form.languages.length) errors['languages.0.language'] = 'Add at least one language.';
-  const languageNames = form.languages.map((row) => row.language.trim().toLocaleLowerCase()).filter(Boolean);
-  if (new Set(languageNames).size !== languageNames.length) errors['languages.0.language'] = 'Languages must not be duplicated.';
-  form.languages.forEach((row, index) => {
-    if (!row.language.trim()) errors[`languages.${index}.language`] = 'Language is required.';
-    if (!row.proficiency) errors[`languages.${index}.proficiency`] = 'Choose a proficiency.';
-  });
-  if (form.profileUrl) {
-    try { new URL(form.profileUrl); } catch { errors.profileUrl = 'Enter a valid URL.'; }
-  }
-  if (form.yearsExperience !== '' && (!Number.isFinite(Number(form.yearsExperience)) || Number(form.yearsExperience) < 0)) {
-    errors.yearsExperience = 'Enter a non-negative number.';
-  }
-  if (form.coverNote.length > 1000) errors.coverNote = 'Use 1,000 characters or fewer.';
-  return errors;
+function buildApplicationSnapshot(profile, authUser, resumeFile) {
+  const resumeData = profile?.resume_data && typeof profile.resume_data === 'object'
+    ? profile.resume_data : {};
+  const populatedProfile = {
+    ...profile,
+    email: authUser?.email || profile?.email || '',
+    // The parsed resume may have skills even if the top-level skills column is empty.
+    skills: Array.isArray(profile?.skills) && profile.skills.length ? profile.skills : (resumeData.skills || []),
+    education: Array.isArray(profile?.education) && profile.education.length ? profile.education : (resumeData.education || []),
+  };
+  const base = createApplicationForm(populatedProfile);
+  const fullName = base.fullName.trim() || String(authUser?.user_metadata?.full_name || authUser?.user_metadata?.name || '').trim();
+  const education = Array.isArray(base.education) ? base.education.filter((entry) =>
+    hasText(String(entry.degreeLevel || '')) || hasText(String(entry.fieldOfStudy || '')) || hasText(String(entry.school || ''))
+  ) : [];
+
+  return {
+    ...base,
+    fullName,
+    education,
+    languages: (base.languages || []).filter((entry) => hasText(String(entry.language || ''))),
+    qualifications: (base.qualifications || []).filter((entry) => hasText(String(entry.name || ''))),
+    // Preserve all parsed experience in the saved applicant_details JSON snapshot.
+    experience: Array.isArray(resumeData.experience) ? resumeData.experience : [],
+    // The resume is referenced in Storage, not duplicated or re-uploaded.
+    resumeBucket: resumeFile ? 'resumes' : null,
+    resumeFilePath: resumeFile?.name || null,
+    resumeFileName: resumeFile?.name || null,
+    resumeFileUrl: resumeFile?.existingUrl || null,
+  };
 }
 
-export function ApplicationFormModal({ job, profile, isDarkMode, isSubmitting, submitError, onSubmit, onClose }) {
-  const initialForm = useMemo(() => createApplicationForm(profile), [profile]);
-  const [form, setForm] = useState(initialForm);
-  const [errors, setErrors] = useState({});
-  const [skillDraft, setSkillDraft] = useState('');
-  const [isDirty, setIsDirty] = useState(false);
-  const firstFieldRef = useRef(null);
-  const inputClass = `w-full rounded-lg border px-3 py-2.5 text-sm outline-none transition-colors focus:border-[#ea6036] focus:ring-1 focus:ring-[#ea6036] ${isDarkMode ? 'border-white/10 bg-[#0a121c] text-white' : 'border-slate-300 bg-white text-slate-900'}`;
+function getMissingInformation(details) {
+  const missing = [];
+  if (!hasText(details.fullName)) missing.push('Full name');
+  if (!emailLooksValid(details.email)) missing.push('Valid email');
+  if (!phoneLooksValid(details.phone)) missing.push('Valid phone number');
+  if (!hasText(details.location)) missing.push('Location');
+  if (!details.resumeFilePath && !details.resumeFileUrl) missing.push('Uploaded resume');
+  if (!details.education?.some((entry) => hasText(String(entry.school || '')) &&
+    (hasText(String(entry.degreeLevel || '')) || hasText(String(entry.fieldOfStudy || ''))))) {
+    missing.push('Education');
+  }
+  if (!details.skills?.length) missing.push('Skills');
+  return missing;
+}
+
+function CheckIcon({ good }) {
+  return good ? (
+    <svg className="h-5 w-5 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d="m5 12 4 4L19 6" /></svg>
+  ) : (
+    <svg className="h-5 w-5 text-amber-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path strokeLinecap="round" d="M12 7v6m0 3h.01" /></svg>
+  );
+}
+
+/**
+ * Quick Apply: read the candidate's latest saved profile and resume, then let them
+ * explicitly confirm before using the existing apply_to_job RPC through onSubmit.
+ * This replaces the long repeat-entry form, not the Supabase submission logic.
+ */
+export function ApplicationFormModal({ job, profile, isDarkMode, isSubmitting, submitError, onSubmit, onClose, onEditProfile }) {
+  const [snapshot, setSnapshot] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [localError, setLocalError] = useState('');
+  const [consent, setConsent] = useState(false);
+  const closeRef = useRef(null);
+  const pendingRef = useRef(false);
   const muted = isDarkMode ? 'text-slate-400' : 'text-slate-500';
+  const heading = isDarkMode ? 'text-white' : 'text-[#1B2A5C]';
+  const card = isDarkMode ? 'border-white/10 bg-[#121e2e]' : 'border-slate-200 bg-slate-50';
+
+  const loadApplicant = useCallback(async () => {
+    setIsLoading(true);
+    setLoadError('');
+    setLocalError('');
+    setConsent(false);
+    try {
+      const { data: auth, error: authError } = await supabase.auth.getUser();
+      if (authError) throw authError;
+      const authUser = auth?.user;
+      if (!authUser) throw new Error('Sign in to continue your application.');
+
+      const { data: freshProfile, error: profileError } = await supabase
+        .from('candidate_profiles')
+        .select('*')
+        .eq('id', authUser.id)
+        .maybeSingle();
+      if (profileError) throw profileError;
+
+      const { data: objects, error: storageError } = await supabase.storage
+        .from('resumes').list('', { search: `${authUser.id}-resume.` });
+      if (storageError) throw new Error(`Could not check the uploaded resume: ${storageError.message}`);
+      const uploaded = (objects || [])
+        .filter((file) => file.name?.startsWith(`${authUser.id}-resume.`))
+        .sort((a, b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0))[0];
+      // Some existing candidate records store a reference directly on the profile.
+      const savedResumeUrl = freshProfile?.resumeFileUrl || freshProfile?.resume_file_url;
+      const resumeFile = uploaded || (hasText(savedResumeUrl) ? { existingUrl: savedResumeUrl } : null);
+      setSnapshot(buildApplicationSnapshot(freshProfile || profile || {}, authUser, resumeFile));
+    } catch (error) {
+      setLoadError(error?.message || 'Could not retrieve your saved candidate information.');
+      setSnapshot(null);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [profile]);
+
+  useEffect(() => { loadApplicant(); }, [loadApplicant]);
 
   useEffect(() => {
-    firstFieldRef.current?.focus();
-    const oldOverflow = document.body.style.overflow;
+    const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = oldOverflow;
-    };
+    closeRef.current?.focus();
+    return () => { document.body.style.overflow = previousOverflow; };
   }, []);
 
   const requestClose = useCallback(() => {
-    if (isSubmitting) return;
-    if (isDirty && !window.confirm('Discard your application form changes?')) return;
-    onClose();
-  }, [isDirty, isSubmitting, onClose]);
+    if (!isSubmitting && !pendingRef.current) onClose();
+  }, [isSubmitting, onClose]);
 
   useEffect(() => {
     const onKeyDown = (event) => {
-      if (event.key === 'Escape') requestClose();
+      if (event.key === 'Escape') { event.stopPropagation(); requestClose(); }
     };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [requestClose]);
 
-  const updateField = (field, value) => {
-    setForm((current) => ({ ...current, [field]: value }));
-    setIsDirty(true);
-    setErrors((current) => ({ ...current, [field]: '' }));
-  };
-  const updateRow = (group, index, field, value) => {
-    setForm((current) => ({
-      ...current,
-      [group]: current[group].map((row, rowIndex) => rowIndex === index ? { ...row, [field]: value } : row),
-    }));
-    setIsDirty(true);
-    setErrors((current) => ({ ...current, [`${group}.${index}.${field}`]: '' }));
-  };
+  const missing = useMemo(() => snapshot ? getMissingInformation(snapshot) : [], [snapshot]);
+  const ready = Boolean(snapshot && !isLoading && !loadError && missing.length === 0);
+  const details = [
+    { label: 'Personal information', complete: !!snapshot && !missing.some((item) => ['Full name', 'Valid email', 'Valid phone number', 'Location'].includes(item)),
+      detail: snapshot ? `${snapshot.fullName || 'Name missing'} · ${snapshot.email || 'Email missing'}` : 'Not loaded' },
+    { label: 'Uploaded resume', complete: !!(snapshot?.resumeFilePath || snapshot?.resumeFileUrl),
+      detail: snapshot?.resumeFileName || (snapshot?.resumeFileUrl ? 'Saved resume link' : 'No resume found') },
+    { label: 'Education', complete: !!snapshot && !missing.includes('Education'),
+      detail: snapshot?.education?.length ? `${snapshot.education.length} education entry/entries` : 'No education found' },
+    { label: 'Skills', complete: !!snapshot?.skills?.length,
+      detail: snapshot?.skills?.length ? snapshot.skills.slice(0, 5).join(', ') : 'No skills found' },
+  ];
 
-  const input = (label, name, value, onChange, { type = 'text', required = false, maxLength, placeholder = '', inputMode, min, ref } = {}) => {
-    const error = errors[name];
-    const errorId = `${name.replaceAll('.', '-')}-error`;
-    return (
-      <label className="flex min-w-0 flex-col gap-1.5">
-        <span className={`text-xs font-bold ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>{label}{required ? ' *' : ''}</span>
-        <input
-          ref={ref}
-          type={type}
-          step={type === 'number' ? 'any' : undefined}
-          inputMode={inputMode || (name === 'email' ? 'email' : name === 'phone' ? 'tel' : undefined)}
-          name={name}
-          value={value}
-          aria-required={required}
-          maxLength={maxLength}
-          min={min}
-          placeholder={placeholder}
-          onChange={(event) => onChange(event.target.value)}
-          aria-invalid={Boolean(error)}
-          aria-describedby={error ? errorId : undefined}
-          className={`${inputClass} ${error ? 'border-red-500' : ''}`}
-        />
-        {error && <span id={errorId} className="text-xs text-red-500">{error}</span>}
-      </label>
-    );
-  };
-
-  const select = (label, name, value, choices, onChange, required = false) => {
-    const error = errors[name];
-    const errorId = `${name.replaceAll('.', '-')}-error`;
-    return (
-      <label className="flex min-w-0 flex-col gap-1.5">
-        <span className={`text-xs font-bold ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>{label}{required ? ' *' : ''}</span>
-        <select
-          name={name}
-          value={value}
-          aria-required={required}
-          onChange={(event) => onChange(event.target.value)}
-          aria-invalid={Boolean(error)}
-          aria-describedby={error ? errorId : undefined}
-          className={`${inputClass} ${error ? 'border-red-500' : ''}`}
-        >
-          <option value="">Select…</option>
-          {choices.map((choice) => <option key={choice} value={choice}>{choice}</option>)}
-        </select>
-        {error && <span id={errorId} className="text-xs text-red-500">{error}</span>}
-      </label>
-    );
-  };
-
-  const addSkill = () => {
-    const skill = skillDraft.trim();
-    if (!skill) return;
-    if (form.skills.length >= 15) {
-      setErrors((current) => ({ ...current, skills: 'Add no more than 15 skills.' }));
-      return;
+  const confirmApplication = async () => {
+    if (!ready || !consent || isSubmitting || pendingRef.current) return;
+    pendingRef.current = true;
+    setLocalError('');
+    try {
+      const result = await onSubmit({ ...snapshot });
+      if (result?.success === false) setLocalError(result.error || 'Application could not be submitted.');
+    } catch (error) {
+      setLocalError(error?.message || 'Application could not be submitted.');
+    } finally {
+      pendingRef.current = false;
     }
-    if (!form.skills.some((current) => current.toLocaleLowerCase() === skill.toLocaleLowerCase())) {
-      updateField('skills', [...form.skills, skill]);
-    }
-    setSkillDraft('');
   };
 
-  const section = (id) => APPLICATION_FORM_SECTIONS.find((item) => item.id === id);
-  const configuredInput = (field, name, value, onChange, ref) => field.control === 'select'
-    ? select(field.label, name, value, field.options, onChange, field.required)
-    : input(field.label, name, value, onChange, {
-        type: field.type,
-        required: field.required,
-        maxLength: field.maxLength,
-        placeholder: field.placeholder,
-        inputMode: field.inputMode,
-        min: field.min,
-        ref,
-      });
-
-  const handleSubmit = async (event) => {
-    event.preventDefault();
-    const validationErrors = validateApplication(form);
-    setErrors(validationErrors);
-    const firstInvalid = Object.keys(validationErrors)[0];
-    if (firstInvalid) {
-      document.querySelector(`[name="${firstInvalid}"]`)?.focus();
-      return;
+  const editProfile = () => {
+    if (isSubmitting || pendingRef.current) return;
+    if (onEditProfile) {
+      onEditProfile();
+    } else {
+      // Standalone Job Details page: return to the Candidate Dashboard and open profile.
+      window.location.assign('/candidate-dashboard#edit-profile');
     }
-    await onSubmit(form);
   };
-
-  const profileSection = section('profile');
-  const educationSection = section('education');
-  const qualificationsSection = section('qualifications');
-  const languagesSection = section('languages');
-  const additionalSection = section('additional');
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center p-3 sm:p-5" role="dialog" aria-modal="true" aria-labelledby="application-title">
-      <button type="button" aria-label="Close application form" className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm" onClick={requestClose} />
-      <form onSubmit={handleSubmit} className={`relative z-10 flex max-h-[calc(100dvh-1.5rem)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl shadow-2xl ${isDarkMode ? 'border border-[#1b2b3b] bg-[#0d1622]' : 'border border-slate-200 bg-white'}`}>
-        <header className={`shrink-0 border-b p-5 sm:p-6 ${isDarkMode ? 'border-white/5' : 'border-slate-200'}`}>
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-xs font-bold uppercase tracking-wider text-[#4fa784]">Application</p>
-              <h2 id="application-title" className={`mt-1 text-2xl font-serif font-bold ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>Apply for {job.title}</h2>
-              <p className={`mt-1 text-sm ${muted}`}>{job.company_name}</p>
-            </div>
-            <button type="button" aria-label="Close application form" onClick={requestClose} className={`rounded-lg p-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#ea6036] ${muted}`}>✕</button>
+    <div className="fixed inset-0 z-[70] flex items-center justify-center p-3 sm:p-5" role="dialog" aria-modal="true" aria-labelledby="quick-apply-title">
+      <button type="button" aria-label="Close quick apply" className="absolute inset-0 bg-slate-950/70 backdrop-blur-sm" onClick={requestClose} />
+      <div className={`relative z-10 flex max-h-[calc(100dvh-1.5rem)] w-full max-w-xl flex-col overflow-hidden rounded-2xl border shadow-2xl ${isDarkMode ? 'border-white/10 bg-[#0d1622]' : 'border-slate-200 bg-white'}`}>
+        <header className={`flex shrink-0 items-start justify-between gap-3 border-b px-5 py-5 sm:px-7 ${isDarkMode ? 'border-white/10' : 'border-slate-200'}`}>
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wide text-[#4fa784]">Quick apply</p>
+            <h2 id="quick-apply-title" className={`mt-1 text-2xl font-serif font-bold ${heading}`}>Confirm your application</h2>
+            <p className={`mt-1 text-sm ${muted}`}>Review the information that will be shared with the recruiter.</p>
           </div>
+          <button ref={closeRef} type="button" onClick={requestClose} aria-label="Close quick apply" className={`rounded-lg p-2 hover:bg-slate-500/10 ${muted}`}>✕</button>
         </header>
 
-        <div className="min-h-0 flex-1 space-y-7 overflow-y-auto p-5 sm:p-6">
-          <section className="space-y-4">
-            <h3 className={`border-b pb-2 text-sm font-bold ${isDarkMode ? 'border-white/10 text-white' : 'border-slate-200 text-slate-900'}`}>{profileSection.label}</h3>
-            <div className="grid gap-4 sm:grid-cols-2">
-              {profileSection.fields.map((field) => <Fragment key={field.name}>{field.control === 'textarea' ? (
-                <label key={field.name} className="flex flex-col gap-1.5 sm:col-span-2">
-                  <span className={`text-xs font-bold ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>{field.label}</span>
-                  <textarea name={field.name} rows="3" maxLength={field.maxLength} value={form[field.name]} onChange={(event) => updateField(field.name, event.target.value)} aria-invalid={Boolean(errors[field.name])} aria-describedby={errors[field.name] ? `${field.name}-error` : `${field.name}-count`} className={`${inputClass} resize-y`} />
-                  <span id={`${field.name}-count`} className={`text-right text-[11px] ${muted}`}>{form[field.name].length}/{field.maxLength}</span>
-                  {errors[field.name] && <span id={`${field.name}-error`} className="text-xs text-red-500">{errors[field.name]}</span>}
-                </label>
-              ) : configuredInput(field, field.name, form[field.name], (value) => updateField(field.name, value), field.name === 'fullName' ? firstFieldRef : undefined)}</Fragment>)}
+        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-5 sm:px-7 sm:py-6">
+          <div className={`rounded-xl border p-4 ${card}`}>
+            <p className={`font-bold ${heading}`}>{job?.title || 'Job position'}</p>
+            <p className={`mt-1 text-sm ${muted}`}>{job?.company_name || 'Company'}</p>
+          </div>
+
+          {isLoading ? (
+            <p role="status" className={`py-5 text-sm ${muted}`}>Checking your saved candidate profile and resume…</p>
+          ) : loadError ? (
+            <div role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-600">
+              <p>{loadError}</p>
+              <button type="button" onClick={loadApplicant} className="mt-3 font-bold underline">Try again</button>
             </div>
-          </section>
-
-          <RepeatableRows
-            label={educationSection.label}
-            rows={form.education}
-            minRows={1}
-            createRow={createEmptyEducation}
-            onAdd={(row) => { setForm((current) => ({ ...current, education: [...current.education, row] })); setIsDirty(true); }}
-            onRemove={(index) => { setForm((current) => ({ ...current, education: current.education.filter((_, i) => i !== index) })); setIsDirty(true); }}
-            onChange={(index, field, value) => updateRow('education', index, field, value)}
-            isDarkMode={isDarkMode}
-            renderRow={(row, index, change) => (
-              <div className="grid gap-3 sm:grid-cols-2">
-                {educationSection.fields.map((field) => <Fragment key={field.name}>{configuredInput(field, `education.${index}.${field.name}`, row[field.name], (value) => change(field.name, value))}</Fragment>)}
+          ) : (
+            <>
+              <h3 className={`text-sm font-bold ${heading}`}>Information to be submitted</h3>
+              <div className="space-y-4">
+                {details.map((item) => (
+                  <div key={item.label} className="flex items-start gap-3">
+                    <span className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${isDarkMode ? 'bg-white/10' : 'bg-slate-100'}`}><CheckIcon good={item.complete} /></span>
+                    <div className="min-w-0 flex-1">
+                      <p className={`text-sm font-bold ${heading}`}>{item.label}</p>
+                      <p className={`mt-0.5 break-words text-xs ${muted}`}>{item.detail}</p>
+                    </div>
+                    <span className={`shrink-0 text-[11px] font-semibold ${item.complete ? 'text-emerald-500' : 'text-amber-500'}`}>{item.complete ? 'Ready' : 'Incomplete'}</span>
+                  </div>
+                ))}
               </div>
-            )}
-          />
 
-          <section className="space-y-4">
-            <h3 className={`border-b pb-2 text-sm font-bold ${isDarkMode ? 'border-white/10 text-white' : 'border-slate-200 text-slate-900'}`}>{qualificationsSection.label}</h3>
-            <RepeatableRows
-              label={qualificationsSection.rowLabel}
-              rows={form.qualifications}
-              minRows={0}
-              createRow={createEmptyQualification}
-              onAdd={(row) => { setForm((current) => ({ ...current, qualifications: [...current.qualifications, row] })); setIsDirty(true); }}
-              onRemove={(index) => { setForm((current) => ({ ...current, qualifications: current.qualifications.filter((_, i) => i !== index) })); setIsDirty(true); }}
-              onChange={(index, field, value) => updateRow('qualifications', index, field, value)}
-              isDarkMode={isDarkMode}
-              renderRow={(row, index, change) => (
-                <div className="grid gap-3 sm:grid-cols-3">
-                  {qualificationsSection.fields.map((field) => <Fragment key={field.name}>{configuredInput(field, `qualifications.${index}.${field.name}`, row[field.name], (value) => change(field.name, value))}</Fragment>)}
+              {snapshot && (
+                <div className={`rounded-xl border p-4 text-xs leading-6 ${card} ${muted}`}>
+                  <p><span className="font-bold">Phone:</span> {snapshot.phone || 'Not provided'}</p>
+                  <p><span className="font-bold">Location:</span> {snapshot.location || 'Not provided'}</p>
+                  {snapshot.education?.length > 0 && <p><span className="font-bold">Education:</span> {snapshot.education.map((item) => [item.degreeLevel, item.fieldOfStudy, item.school].filter(Boolean).join(' · ')).join('; ')}</p>}
+                  <p className="mt-2">Your saved profile details, education, skills, and resume reference will be included in the application. The resume file itself is not duplicated.</p>
                 </div>
               )}
-            />
-            <div className="space-y-2">
-              <label htmlFor="application-skills" className={`text-xs font-bold ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>{qualificationsSection.skills.label} (up to {qualificationsSection.skills.maxCount})</label>
-              <div className="flex gap-2">
-                <input id="application-skills" name="skills" value={skillDraft} onChange={(event) => setSkillDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); addSkill(); } }} placeholder={qualificationsSection.skills.placeholder} className={inputClass} aria-invalid={Boolean(errors.skills)} aria-describedby={errors.skills ? 'skills-error' : undefined} />
-                <button type="button" onClick={addSkill} className="shrink-0 rounded-lg bg-[#ea6036] px-4 text-xs font-bold text-white">Add</button>
-              </div>
-              {errors.skills && <p id="skills-error" className="text-xs text-red-500">{errors.skills}</p>}
-              <div className="flex flex-wrap gap-2">
-                {form.skills.map((skill) => <button key={skill} type="button" onClick={() => updateField('skills', form.skills.filter((item) => item !== skill))} aria-label={`Remove skill ${skill}`} className="rounded-full bg-[#ea6036]/10 px-3 py-1 text-xs font-semibold text-[#ea6036]">{skill} ×</button>)}
-              </div>
-            </div>
-          </section>
 
-          <RepeatableRows
-            label={languagesSection.label}
-            rows={form.languages}
-            minRows={1}
-            createRow={createEmptyLanguage}
-            onAdd={(row) => { setForm((current) => ({ ...current, languages: [...current.languages, row] })); setIsDirty(true); }}
-            onRemove={(index) => { setForm((current) => ({ ...current, languages: current.languages.filter((_, i) => i !== index) })); setIsDirty(true); }}
-            onChange={(index, field, value) => updateRow('languages', index, field, value)}
-            isDarkMode={isDarkMode}
-            renderRow={(row, index, change) => (
-              <div className="grid gap-3 sm:grid-cols-2">
-                {languagesSection.fields.map((field) => <Fragment key={field.name}>{field.suggestions ? (
-                  <label key={field.name} className="flex flex-col gap-1.5">
-                    <span className={`text-xs font-bold ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>{field.label}{field.required ? ' *' : ''}</span>
-                    <input list="common-languages-list" name={`languages.${index}.${field.name}`} value={row[field.name]} onChange={(event) => change(field.name, event.target.value)} aria-invalid={Boolean(errors[`languages.${index}.${field.name}`])} aria-describedby={errors[`languages.${index}.${field.name}`] ? `languages-${index}-${field.name}-error` : undefined} className={inputClass} />
-                    {errors[`languages.${index}.${field.name}`] && <span id={`languages-${index}-${field.name}-error`} className="text-xs text-red-500">{errors[`languages.${index}.${field.name}`]}</span>}
-                  </label>
-                ) : configuredInput(field, `languages.${index}.${field.name}`, row[field.name], (value) => change(field.name, value))}</Fragment>)}
-              </div>
-            )}
-          />
-          <datalist id="common-languages-list">{languagesSection.fields.find((field) => field.suggestions)?.suggestions.map((language) => <option key={language} value={language} />)}</datalist>
+              {missing.length > 0 && (
+                <div role="status" className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4">
+                  <p className={`text-sm font-bold ${isDarkMode ? 'text-amber-300' : 'text-amber-800'}`}>Complete your profile before applying</p>
+                  <p className={`mt-1 text-xs ${muted}`}>Missing or invalid: {missing.join(', ')}.</p>
+                  <button type="button" onClick={editProfile} className="mt-3 rounded-lg bg-[#ea6036] px-4 py-2 text-xs font-bold text-white hover:bg-[#d8552e]">Update candidate profile</button>
+                </div>
+              )}
 
-          <section className="space-y-4">
-            <h3 className={`border-b pb-2 text-sm font-bold ${isDarkMode ? 'border-white/10 text-white' : 'border-slate-200 text-slate-900'}`}>{additionalSection.label}</h3>
-            <div className="grid gap-4 sm:grid-cols-2">
-              {additionalSection.fields.map((field) => <Fragment key={field.name}>{field.control === 'textarea' ? (
-                <label key={field.name} className="flex flex-col gap-1.5 sm:col-span-2">
-                  <span className={`text-xs font-bold ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>{field.label}</span>
-                  <textarea name={field.name} rows="4" maxLength={field.maxLength} value={form[field.name]} onChange={(event) => updateField(field.name, event.target.value)} aria-invalid={Boolean(errors[field.name])} aria-describedby={errors[field.name] ? `${field.name}-error` : `${field.name}-count`} className={`${inputClass} resize-y`} />
-                  <span id={`${field.name}-count`} className={`text-right text-[11px] ${muted}`}>{form[field.name].length}/{field.maxLength.toLocaleString()}</span>
-                  {errors[field.name] && <span id={`${field.name}-error`} className="text-xs text-red-500">{errors[field.name]}</span>}
+              {ready && (
+                <label className={`flex cursor-pointer items-start gap-3 rounded-xl border p-4 ${card}`}>
+                  <input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} disabled={isSubmitting}
+                    className="mt-0.5 h-4 w-4 shrink-0 accent-[#ea6036]" />
+                  <span className={`text-xs leading-relaxed ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>
+                    I have reviewed my saved information and agree to share these application details with this employer.
+                  </span>
                 </label>
-              ) : configuredInput(field, field.name, form[field.name], (value) => updateField(field.name, value))}</Fragment>)}
-            </div>
-          </section>
-          {submitError && <p role="alert" aria-live="assertive" className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-500">{submitError}</p>}
+              )}
+            </>
+          )}
+          {(submitError || localError) && <p role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-500">{submitError || localError}</p>}
         </div>
-        <footer className={`flex shrink-0 justify-end gap-3 border-t p-4 sm:px-6 ${isDarkMode ? 'border-white/5' : 'border-slate-200'}`}>
-          <button type="button" onClick={requestClose} disabled={isSubmitting} className={`rounded-xl border px-5 py-2.5 text-sm font-bold ${isDarkMode ? 'border-white/10 text-slate-300' : 'border-slate-300 text-slate-700'}`}>Cancel</button>
-          <button type="submit" disabled={isSubmitting} className="inline-flex items-center gap-2 rounded-xl bg-[#ea6036] px-5 py-2.5 text-sm font-bold text-white disabled:opacity-60">
-            {isSubmitting && <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />}
-            {isSubmitting ? 'Submitting…' : 'Submit application'}
+        <footer className={`flex shrink-0 flex-wrap justify-end gap-3 border-t p-4 sm:px-7 ${isDarkMode ? 'border-white/10' : 'border-slate-200'}`}>
+          <button type="button" onClick={requestClose} disabled={isSubmitting} className={`rounded-xl border px-5 py-2.5 text-sm font-bold disabled:opacity-60 ${isDarkMode ? 'border-white/20 text-slate-200' : 'border-slate-300 text-slate-700'}`}>Cancel</button>
+          <button type="button" onClick={confirmApplication} disabled={!ready || !consent || isSubmitting}
+            className="rounded-xl bg-[#ea6036] px-5 py-2.5 text-sm font-bold text-white transition-colors hover:bg-[#d8552e] disabled:cursor-not-allowed disabled:opacity-50">
+            {isSubmitting ? 'Submitting…' : 'Confirm & apply'}
           </button>
         </footer>
-      </form>
+      </div>
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 import { supabase } from '../../supabaseClient.js';
+import { calculateMatchScore } from '../data/services/matchScoring.js';
 
 export function useApplyToJob({ job, userId, onSuccess }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -16,9 +17,15 @@ export function useApplyToJob({ job, userId, onSuccess }) {
     setIsSubmitting(true);
     setError('');
     try {
+      const { score, breakdown } = calculateMatchScore({
+        applicant: applicantDetails,
+        job,
+        semanticSimilarity: job.semanticSimilarity,
+      });
+      if (import.meta.env.DEV) console.log('Applicant match score breakdown:', breakdown);
       const { data, error: applyError } = await supabase.rpc('apply_to_job', {
         p_job_id: job.id,
-        p_match_score: job.match,
+        p_match_score: score,
         p_applicant_details: applicantDetails,
       });
       if (applyError) throw applyError;

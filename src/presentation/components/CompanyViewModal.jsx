@@ -1,3 +1,4 @@
+import { JobDescription } from './JobDescription';
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../../../supabaseClient.js';
 
@@ -101,13 +102,13 @@ export const CompanyViewModal = ({ job, onClose, isDarkMode }) => {
             {job.description && (
               <>
                 <h4 className={`mt-4 text-xs font-bold ${heading}`}>Description</h4>
-                <p className={`mt-1 whitespace-pre-line text-sm leading-relaxed ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>{job.description}</p>
+                <div className="mt-1"><JobDescription text={job.description} isDarkMode={isDarkMode} label="" collapsed={false} /></div>
               </>
             )}
             {job.requirements && (
               <>
                 <h4 className={`mt-4 text-xs font-bold ${heading}`}>Requirements</h4>
-                <p className={`mt-1 whitespace-pre-line text-sm leading-relaxed ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>{job.requirements}</p>
+                <div className="mt-1"><JobDescription text={job.requirements} isDarkMode={isDarkMode} label="" collapsed={false} /></div>
               </>
             )}
           </section>

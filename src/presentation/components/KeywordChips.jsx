@@ -1,3 +1,4 @@
+import { jobTextOnly } from '../../data/services/jobText';
 export function KeywordChips({ job, profile, isDarkMode }) {
   if (!job?.requirements?.trim()) return null;
   const returned = Array.isArray(job.matched_keywords) ? job.matched_keywords : [];
@@ -8,7 +9,7 @@ export function KeywordChips({ job, profile, isDarkMode }) {
     : (Array.isArray(profile?.skills) ? profile.skills : profile?.resume_data?.skills || [])
       .map((skill) => typeof skill === 'string' ? skill.trim() : skill?.name?.trim())
       .filter(Boolean)
-      .map((skill) => ({ label: skill, matched: `${job.requirements}\n${job.description || ''}`.toLocaleLowerCase().includes(skill.toLocaleLowerCase()) }));
+      .map((skill) => ({ label: skill, matched: `${jobTextOnly(job.requirements)}\n${jobTextOnly(job.description)}`.toLocaleLowerCase().includes(skill.toLocaleLowerCase()) }));
   if (!skills.length) return null;
 
   return (

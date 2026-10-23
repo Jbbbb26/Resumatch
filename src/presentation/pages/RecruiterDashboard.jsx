@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getCurrentUser, logoutUser } from '../../data/services/authService';
 import { apiFetch } from '../../data/services/apiClient';
@@ -13,6 +13,8 @@ import { JOB_STATUS_FILTERS, useJobListings } from '../../hooks/useJobListings';
 import { PipelinePage } from './PipelinePage';
 import { FileUploadField } from '../components/FileUploadField';
 import { useJobAttachments } from '../../hooks/useJobAttachments';
+import { RichJobEditor } from '../components/RichJobEditor';
+import { jobTextOnly } from '../../data/services/jobText';
 
 const emptyJobForm = {
   title: '', location: '', work_type: 'Remote', employment_type: 'Full-time', description: '', requirements: '',
@@ -70,61 +72,6 @@ function CloseButton({ onClick, isDarkMode }) {
   );
 }
 
-/* ------------------------------------------------------------------ Resizable textarea with character counter */
-function ResizableTextarea({ id, label, value, onChange, placeholder, maxLength, labelColor, inputBg, isDarkMode }) {
-  const [isExpanded, setIsExpanded] = useState(false);
-  const textareaRef = useRef(null);
-
-  const length = (value || '').length;
-  const ratio = length / maxLength;
-  const mutedColor = isDarkMode ? 'text-slate-500' : 'text-slate-400';
-  const counterColor = length >= maxLength
-    ? 'text-red-500 font-bold'
-    : ratio >= 0.9
-      ? 'text-amber-500 font-semibold'
-      : mutedColor;
-
-  const toggleExpanded = () => {
-    // Clear any height set by dragging the resize handle so the toggle always takes effect
-    if (textareaRef.current) textareaRef.current.style.height = '';
-    setIsExpanded((current) => !current);
-  };
-
-  return (
-    <div className="flex flex-col gap-1.5 md:col-span-2">
-      <div className="flex items-center justify-between gap-3">
-        <label htmlFor={id} className={`text-xs font-bold uppercase tracking-wider ${labelColor}`}>{label}</label>
-        <button
-          type="button"
-          onClick={toggleExpanded}
-          aria-pressed={isExpanded}
-          aria-controls={id}
-          className="rounded-md px-2 py-1 text-xs font-bold text-[#ea6036] transition-colors hover:bg-[#ea6036]/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#ea6036]"
-        >
-          {isExpanded ? 'Collapse' : 'Expand'}
-        </button>
-      </div>
-      <textarea
-        id={id}
-        ref={textareaRef}
-        rows={isExpanded ? 16 : 4}
-        maxLength={maxLength}
-        value={value || ''}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        className={`min-h-[104px] max-h-[60vh] resize-y rounded-xl px-4 py-3 text-sm leading-relaxed outline-none border transition-colors ${inputBg}`}
-      />
-      <div className="flex items-center justify-between text-[11px]">
-        <span className={mutedColor}>Drag the corner to resize, or use {isExpanded ? 'Collapse' : 'Expand'}.</span>
-        <span className={counterColor} role={length >= maxLength ? 'status' : undefined}>
-          {length.toLocaleString()} / {maxLength.toLocaleString()}
-          {length >= maxLength ? ' (limit reached)' : ''}
-        </span>
-      </div>
-    </div>
-  );
-}
-
 /* ------------------------------------------------------------------ Job form (create + edit) */
 function JobFormModal({ mode, form, setForm, jobId, recruiterId, onClose, onSubmit, isSubmitting, message, isDarkMode }) {
   const isEdit = mode === 'edit';
@@ -162,7 +109,7 @@ function JobFormModal({ mode, form, setForm, jobId, recruiterId, onClose, onSubm
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true">
       <button type="button" aria-label="Close job form" className={`fixed inset-0 backdrop-blur-sm transition-opacity ${isDarkMode ? 'bg-[#04080e]/80' : 'bg-slate-900/30'}`} onClick={requestClose} />
-      <form onSubmit={handleSubmit} className={`relative z-10 flex max-h-[calc(100dvh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl shadow-2xl transition-colors ${isDarkMode ? 'border border-[#1b2b3b] bg-[#0d1622]' : 'border border-slate-200 bg-white'}`}>
+      <form onSubmit={handleSubmit} className={`relative z-10 flex max-h-[calc(100dvh-2rem)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl shadow-2xl transition-colors ${isDarkMode ? 'border border-[#1b2b3b] bg-[#0d1622]' : 'border border-slate-200 bg-white'}`}>
         <header className={`flex shrink-0 items-start justify-between gap-4 border-b p-6 sm:px-8 ${isDarkMode ? 'border-white/5' : 'border-slate-200'}`}>
           <div className="min-w-0">
             <h2 className={`text-2xl font-serif font-bold ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{isEdit ? 'Edit job listing' : 'Post a new job listing'}</h2>
@@ -192,26 +139,22 @@ function JobFormModal({ mode, form, setForm, jobId, recruiterId, onClose, onSubm
                 <option>Full-time</option><option>Part-time</option><option>Contract</option>
               </select>
             </label>
-            <ResizableTextarea
+            <RichJobEditor
               id="job-description"
               label="Description"
               value={form.description}
               onChange={(value) => updateField('description', value)}
               placeholder="Describe the role and responsibilities"
               maxLength={JOB_TEXT_LIMITS.description}
-              labelColor={labelColor}
-              inputBg={inputBg}
               isDarkMode={isDarkMode}
             />
-            <ResizableTextarea
+            <RichJobEditor
               id="job-requirements"
               label="Requirements"
               value={form.requirements}
               onChange={(value) => updateField('requirements', value)}
               placeholder="List the minimum qualifications and skills"
               maxLength={JOB_TEXT_LIMITS.requirements}
-              labelColor={labelColor}
-              inputBg={inputBg}
               isDarkMode={isDarkMode}
             />
             <FileUploadField
@@ -443,10 +386,10 @@ function ReviewApplicationsModal({ job, onClose, onStatusChange, isDarkMode }) {
 /* ------------------------------------------------------------------ Shared: save a job (create or edit) */
 const saveJob = async ({ mode, jobId, form }) => {
   if (!form.title.trim()) return { success: false, message: 'Job title is required.' };
-  if ((form.description || '').length > JOB_TEXT_LIMITS.description) {
+  if (jobTextOnly(form.description).length > JOB_TEXT_LIMITS.description) {
     return { success: false, message: `Description must be ${JOB_TEXT_LIMITS.description.toLocaleString()} characters or fewer.` };
   }
-  if ((form.requirements || '').length > JOB_TEXT_LIMITS.requirements) {
+  if (jobTextOnly(form.requirements).length > JOB_TEXT_LIMITS.requirements) {
     return { success: false, message: `Requirements must be ${JOB_TEXT_LIMITS.requirements.toLocaleString()} characters or fewer.` };
   }
   return apiFetch(mode === 'edit' ? `/api/jobs/${jobId}` : '/api/post-job', {

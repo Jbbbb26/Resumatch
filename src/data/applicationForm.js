@@ -1,3 +1,4 @@
+import { jobTextOnly } from './services/jobText';
 export const DEGREE_LEVELS = [
   'High school',
   'Vocational',
@@ -149,7 +150,7 @@ export function getCandidateSkills(profile) {
 
 export function getMatchedKeywords(job, profile) {
   if (!job?.requirements?.trim()) return [];
-  const jobText = `${job.requirements}\n${job.description || ''}`.toLocaleLowerCase();
+  const jobText = `${jobTextOnly(job.requirements)}\n${jobTextOnly(job.description)}`.toLocaleLowerCase();
   return getCandidateSkills(profile).map((skill) => ({
     label: skill,
     matched: jobText.includes(skill.toLocaleLowerCase()),
