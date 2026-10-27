@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 
 export function RejectDialog({ candidateName, isDarkMode, onConfirm, onCancel }) {
   const [reason, setReason] = useState('');
+  const [feedback, setFeedback] = useState('');
   const reasonRef = useRef(null);
   useEffect(() => {
     reasonRef.current?.focus();
@@ -18,7 +19,8 @@ export function RejectDialog({ candidateName, isDarkMode, onConfirm, onCancel })
         <h2 id="reject-title" className={`text-lg font-bold ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>Move candidate to Rejected?</h2>
         <p className={`mt-2 text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{candidateName} will remain in your records and can be moved back to another stage.</p>
         <label className="mt-4 block">
-          <span className={`mb-1.5 block text-xs font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>Reason (optional)</span>
+          <span className={`mb-1.5 block text-xs font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>Internal reason (optional)</span>
+          <span className={`mb-1.5 block text-[11px] ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Only your team sees this.</span>
           <textarea
             ref={reasonRef}
             value={reason}
@@ -27,9 +29,21 @@ export function RejectDialog({ candidateName, isDarkMode, onConfirm, onCancel })
             className={`w-full resize-y rounded-xl border px-3 py-2 text-sm outline-none focus:border-[#ea6036] focus-visible:ring-2 focus-visible:ring-[#ea6036]/30 ${isDarkMode ? 'border-white/10 bg-[#0a121c] text-white' : 'border-slate-300 bg-white text-slate-900'}`}
           />
         </label>
+        <label className="mt-4 block">
+          <span className={`mb-1.5 block text-xs font-bold uppercase tracking-wider ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>Feedback for the candidate (optional)</span>
+          <span className={`mb-1.5 block text-[11px] ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Shown to {candidateName} when they open the notification.</span>
+          <textarea
+            value={feedback}
+            onChange={(event) => setFeedback(event.target.value)}
+            rows={3}
+            maxLength={1000}
+            placeholder="e.g. We went with a candidate who has more ICU experience. We encourage you to apply again."
+            className={`w-full resize-y rounded-xl border px-3 py-2 text-sm outline-none focus:border-[#ea6036] focus-visible:ring-2 focus-visible:ring-[#ea6036]/30 ${isDarkMode ? 'border-white/10 bg-[#0a121c] text-white' : 'border-slate-300 bg-white text-slate-900'}`}
+          />
+        </label>
         <div className="mt-5 flex justify-end gap-3">
           <button type="button" onClick={onCancel} className={`rounded-xl border px-4 py-2 text-sm font-bold focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#ea6036] ${isDarkMode ? 'border-white/10 text-slate-300 hover:bg-white/5' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}>Cancel</button>
-          <button type="button" onClick={() => onConfirm(reason)} className="rounded-xl bg-[#ea6036] px-4 py-2 text-sm font-bold text-white hover:bg-[#d8552e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#ea6036]">Confirm rejection</button>
+          <button type="button" onClick={() => onConfirm({ reason, feedback })} className="rounded-xl bg-[#ea6036] px-4 py-2 text-sm font-bold text-white hover:bg-[#d8552e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#ea6036]">Confirm rejection</button>
         </div>
       </section>
     </div>

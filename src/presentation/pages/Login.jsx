@@ -1,17 +1,35 @@
 import { useState, useEffect } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { 
-  loginWithEmail, 
-  loginWithGoogle, 
+import {
+  loginWithEmail,
+  loginWithGoogle,
   logoutUser,
   sendPasswordResetOtp,
   verifyPasswordResetOtp,
   updatePassword,
-  getCurrentUser,        
-  updateUserMetadata,    
+  getCurrentUser,
+  updateUserMetadata,
   createPublicProfile
-} from '../../data/services/authService'; 
+} from '../../data/services/authService';
 import AppIcon from '../../../assets/Icon.png';
+import { peekReturnPath, takeReturnPath } from '../../data/services/returnPath';
+
+const LOCK_STORAGE_KEY = 'resumatch_login_lock';
+const readLock = (email) => {
+  try {
+    const saved = JSON.parse(localStorage.getItem(LOCK_STORAGE_KEY) || 'null');
+    return saved && saved.email === email.trim().toLowerCase() && saved.until > Date.now() ? saved.until : null;
+  } catch { return null; }
+};
+const saveLock = (email, until) => {
+  try { localStorage.setItem(LOCK_STORAGE_KEY, JSON.stringify({ email: email.trim().toLowerCase(), until })); } catch {  }
+};
+const clearLock = () => { try { localStorage.removeItem(LOCK_STORAGE_KEY); } catch {  } };
+const formatCountdown = (ms) => {
+  const total = Math.max(0, Math.ceil(ms / 1000));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+};
+
 export default function Login() {
   const [verifying, setVerifying] = useState(true);
 
@@ -22,7 +40,11 @@ export default function Login() {
   const [error, setError] = useState(null);
   const [successMsg, setSuccessMsg] = useState(null);
   const [googleLoading, setGoogleLoading] = useState(false);
-  
+  const [lockedUntil, setLockedUntil] = useState(null);
+  const [now, setNow] = useState(Date.now());
+  const isLocked = Boolean(lockedUntil && lockedUntil > now);
+  const [sharedLink] = useState(() => peekReturnPath());
+
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -37,7 +59,8 @@ export default function Login() {
   useEffect(() => {
     const verifyReturningUser = async () => {
       const response = await getCurrentUser();
-      
+      const returnTo = peekReturnPath();
+
       if (response.success && response.data) {
         let userRole = response.data.user_metadata?.role;
         const authIntent = sessionStorage.getItem('authIntent');
@@ -52,12 +75,12 @@ export default function Login() {
             return;
           } else {
             const googleName = response.data.user_metadata?.full_name || response.data.user_metadata?.name || '';
-            
+
             await updateUserMetadata({ role: intendedRole });
-            
+
             await createPublicProfile(response.data.id, response.data.email, intendedRole, googleName);
-            
-            userRole = intendedRole; 
+
+            userRole = intendedRole;
             sessionStorage.clear();
           }
         }
@@ -70,11 +93,7 @@ export default function Login() {
           return;
         }
 
-        if (userRole === 'recruiter') {
-          navigate('/recruiter-dashboard');
-        } else {
-          navigate('/candidate-dashboard');
-        }
+        navigate(takeReturnPath(userRole, returnTo));
       } else {
         setVerifying(false);
       }
@@ -83,34 +102,56 @@ export default function Login() {
     verifyReturningUser();
   }, [navigate]);
 
+  useEffect(() => {
+    const saved = readLock(email);
+    setLockedUntil(saved);
+  }, [email]);
+
+  useEffect(() => {
+    if (!lockedUntil) return undefined;
+    const timer = setInterval(() => {
+      setNow(Date.now());
+      if (Date.now() >= lockedUntil) {
+        setLockedUntil(null);
+        clearLock();
+        setError(null);
+      }
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [lockedUntil]);
+
   const handleEmailLogin = async (e) => {
     e.preventDefault();
+    if (isLocked) return;
     setLoading(true);
     setError(null);
     setSuccessMsg(null);
-    
+
     const response = await loginWithEmail(email, password);
-    
+
     if (!response.success) {
+      if (response.locked && response.retryAfterSeconds) {
+        const until = Date.now() + response.retryAfterSeconds * 1000;
+        setNow(Date.now());
+        setLockedUntil(until);
+        saveLock(email, until);
+        setPassword('');
+      }
       setError(response.message);
       setLoading(false);
     } else {
+      clearLock();
       const userRole = response.data.user?.user_metadata?.role;
-      
-      if (userRole === 'recruiter') {
-        navigate('/recruiter-dashboard');
-      } else {
-        navigate('/candidate-dashboard'); 
-      }
+      navigate(takeReturnPath(userRole));
     }
   };
 
   const handleGoogleLogin = async () => {
     setGoogleLoading(true);
     sessionStorage.setItem('authIntent', 'login');
-    
-    const response = await loginWithGoogle('/login'); 
-    
+
+    const response = await loginWithGoogle('/login');
+
     if (!response.success) {
       setError(response.message);
       setGoogleLoading(false);
@@ -128,7 +169,6 @@ export default function Login() {
     );
   }
 
-  
   const handleSendOtp = async (e) => {
     e.preventDefault();
     setForgotLoading(true);
@@ -187,22 +227,17 @@ export default function Login() {
           <span className="text-xl font-bold font-serif text-slate-900">ResuMatch</span>
         </div>
         <div className="flex items-center gap-6 text-sm text-slate-600">
-          <a href="#" className="hover:text-indigo-600">Support & Guides</a>
-          <div className="flex items-center gap-1 cursor-pointer">
-            <span className="material-icons text-sm">language</span>
-            EN (US)
-          </div>
+          <Link to="/signup" className="font-semibold text-indigo-600 hover:text-indigo-700">Create an account</Link>
         </div>
       </header>
 
       <main className="flex-grow flex items-center justify-center p-4">
         <div className="bg-white max-w-md w-full rounded-2xl shadow-sm border border-slate-100 p-8 space-y-6">
-          
+
           <div className="text-center space-y-1">
             <h1 className="text-2xl font-bold font-serif text-slate-900">Welcome back</h1>
             <p className="text-sm text-slate-500">Sign in to continue to your ResuMatch workspace</p>
           </div>
-
 
          <button onClick={handleGoogleLogin} disabled={googleLoading} type="button" className={`w-full flex items-center justify-center gap-2 border border-slate-300 rounded-lg py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors ${googleLoading ? 'opacity-70 cursor-not-allowed' : ''}`}>
   {googleLoading ? (
@@ -222,7 +257,25 @@ export default function Login() {
             <div className="flex-grow border-t border-slate-200"></div>
           </div>
 
-          {error && <div className="bg-red-50 text-red-600 p-3 rounded-lg text-sm border border-red-100">{error}</div>}
+          {error && (
+            <div role="alert" className="bg-red-50 text-red-600 p-3 rounded-lg text-sm border border-red-100">
+              {isLocked
+                ? <>Too many failed sign-in attempts. You can try again in <strong>{formatCountdown(lockedUntil - now)}</strong>.</>
+                : error}
+              {isLocked && (
+                <p className="mt-1.5 text-xs text-red-500">
+                  Forgot your password?{' '}
+                  <button type="button" onClick={() => { setForgotEmail(email); setIsForgotModalOpen(true); }} className="font-semibold underline">Reset it now</button>
+                  {' '}or continue with Google.
+                </p>
+              )}
+            </div>
+          )}
+          {sharedLink && !error && (
+            <div className="bg-indigo-50 text-indigo-700 p-3 rounded-lg text-sm border border-indigo-100">
+              Sign in to continue to the {sharedLink.startsWith('/companies/') ? 'company page' : 'job'} you were viewing.
+            </div>
+          )}
           {successMsg && <div className="bg-emerald-50 text-emerald-600 p-3 rounded-lg text-sm border border-emerald-100">{successMsg}</div>}
 
           <form onSubmit={handleEmailLogin} className="space-y-4">
@@ -241,8 +294,8 @@ export default function Login() {
               <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required placeholder="Enter your password" className="w-full border border-slate-300 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
             </div>
 
-            <button type="submit" disabled={loading} className={`w-full bg-[#3924D6] hover:bg-indigo-700 text-white rounded-lg py-2.5 text-sm font-medium transition-colors shadow-sm mt-2 flex justify-center items-center ${loading ? 'opacity-70 cursor-not-allowed' : ''}`}>
-              {loading ? 'Signing in...' : 'Sign in'}
+            <button type="submit" disabled={loading || isLocked} className={`w-full bg-[#3924D6] hover:bg-indigo-700 text-white rounded-lg py-2.5 text-sm font-medium transition-colors shadow-sm mt-2 flex justify-center items-center ${loading || isLocked ? 'opacity-70 cursor-not-allowed' : ''}`}>
+              {loading ? 'Signing in...' : isLocked ? `Try again in ${formatCountdown(lockedUntil - now)}` : 'Sign in'}
             </button>
           </form>
 
@@ -252,10 +305,18 @@ export default function Login() {
         </div>
       </main>
 
+      <footer className="flex flex-col sm:flex-row items-center justify-between gap-3 px-8 py-6 text-xs font-medium text-slate-500">
+        <div>© {new Date().getFullYear()} ResuMatch. All rights reserved.</div>
+        <div className="flex gap-6">
+          <Link to="/privacy" className="hover:text-slate-800">Privacy Policy</Link>
+          <Link to="/terms" className="hover:text-slate-800">Terms of Service</Link>
+        </div>
+      </footer>
+
       {isForgotModalOpen && (
         <div className="absolute inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
           <div className="bg-white w-full max-w-sm rounded-2xl shadow-xl border border-slate-100 overflow-hidden">
-            
+
             <div className="flex justify-between items-center p-5 border-b border-slate-100">
               <h2 className="text-lg font-semibold text-slate-900">Reset Password</h2>
               <button onClick={closeForgotModal} className="text-slate-400 hover:text-slate-600">

@@ -5,6 +5,7 @@ import { CandidateDrawer } from '../components/pipeline/CandidateDrawer';
 import { PipelineBoard } from '../components/pipeline/PipelineBoard';
 import { PipelineToolbar } from '../components/pipeline/PipelineToolbar';
 import { RejectDialog } from '../components/pipeline/RejectDialog';
+import { InterviewDialog } from '../components/pipeline/InterviewDialog';
 
 function PipelineSkeleton({ isDarkMode }) {
   return (
@@ -23,15 +24,37 @@ export function PipelinePage({ user, isDarkMode }) {
   const pipeline = usePipeline(user?.id);
   const [selectedApplication, setSelectedApplication] = useState(null);
   const [rejectApplication, setRejectApplication] = useState(null);
+  const [interviewRequest, setInterviewRequest] = useState(null);
   const heading = isDarkMode ? 'text-white' : 'text-slate-900';
   const muted = isDarkMode ? 'text-slate-400' : 'text-slate-500';
 
   const requestReject = (application) => setRejectApplication(application);
-  const confirmReject = async (reason) => {
+  const confirmReject = async (details) => {
     if (rejectApplication) {
-      await pipeline.moveCandidate(rejectApplication.id, 'rejected', reason);
+      await pipeline.moveCandidate(rejectApplication.id, 'rejected', details);
       setRejectApplication(null);
     }
+  };
+
+  const handleMove = (id, stage, details) => {
+    if (stage === 'interview') {
+      const application = pipeline.allApplications.find((item) => item.id === id);
+      if (application && application.stage !== 'interview') {
+        setInterviewRequest({ application, isEdit: false });
+        return Promise.resolve(true);
+      }
+    }
+    return pipeline.moveCandidate(id, stage, details);
+  };
+
+  const confirmInterview = async (fields) => {
+    if (!interviewRequest) return false;
+    const { application, isEdit } = interviewRequest;
+    const ok = isEdit
+      ? await pipeline.updateInterview(application.id, fields)
+      : await pipeline.moveCandidate(application.id, 'interview', fields);
+    if (ok) setInterviewRequest(null);
+    return ok;
   };
 
   return (
@@ -72,7 +95,7 @@ export function PipelinePage({ user, isDarkMode }) {
           groupedByStage={pipeline.groupedByStage}
           isDarkMode={isDarkMode}
           onView={setSelectedApplication}
-          onMove={pipeline.moveCandidate}
+          onMove={handleMove}
           onRequestReject={requestReject}
         />
       )}
@@ -85,6 +108,17 @@ export function PipelinePage({ user, isDarkMode }) {
           isDarkMode={isDarkMode}
           onClose={() => setSelectedApplication(null)}
           onSaveNotes={pipeline.saveNotes}
+          onEditInterview={(application) => setInterviewRequest({ application, isEdit: true })}
+        />
+      )}
+      {interviewRequest && (
+        <InterviewDialog
+          candidateName={getPipelinePerson(interviewRequest.application).name}
+          initial={interviewRequest.application}
+          isEdit={interviewRequest.isEdit}
+          isDarkMode={isDarkMode}
+          onConfirm={confirmInterview}
+          onCancel={() => setInterviewRequest(null)}
         />
       )}
       {rejectApplication && (

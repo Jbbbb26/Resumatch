@@ -17,12 +17,16 @@ export function useApplyToJob({ job, userId, onSuccess }) {
     setIsSubmitting(true);
     setError('');
     try {
-      const { score, breakdown } = calculateMatchScore({
-        applicant: applicantDetails,
-        job,
-        semanticSimilarity: job.semanticSimilarity,
-      });
-      if (import.meta.env.DEV) console.log('Applicant match score breakdown:', breakdown);
+      let score = job.matchAnalysis?.score;
+      if (!Number.isFinite(score)) {
+        const fallback = calculateMatchScore({
+          applicant: applicantDetails,
+          job,
+          semanticSimilarity: job.semanticSimilarity,
+        });
+        score = fallback.score;
+        if (import.meta.env.DEV) console.log('Applicant match score breakdown (fallback):', fallback.breakdown);
+      }
       const { data, error: applyError } = await supabase.rpc('apply_to_job', {
         p_job_id: job.id,
         p_match_score: score,

@@ -6,6 +6,10 @@ import { TopHeader } from '../components/TopHeader';
 import { ProfileModal } from '../components/ProfileModal';
 import { ApplicationsModal } from '../components/ApplicationsModal';
 import { getCurrentUser, logoutUser } from '../../data/services/authService';
+import { ShareButton, companyShareUrl } from '../components/ShareButton';
+import { GuestHeader } from '../components/GuestHeader';
+import { fetchPublicCompany } from '../../data/services/publicData';
+import { galleryFrom, MAX_GALLERY_PHOTOS } from '../../data/services/companyMedia';
 
 const formatDate = (value) => value
   ? new Date(value).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
@@ -45,6 +49,7 @@ export default function CompanyProfilePage() {
   const navigate = useNavigate();
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [headerUser, setHeaderUser] = useState(null);
+  const [headerChecked, setHeaderChecked] = useState(false);
   const [isProfileOpen, setProfileOpen] = useState(false);
   const [isApplicationsOpen, setApplicationsOpen] = useState(false);
   const [applicationCount, setApplicationCount] = useState(0);
@@ -52,11 +57,11 @@ export default function CompanyProfilePage() {
   const [applicationsLoading, setApplicationsLoading] = useState(false);
   const [applicationsError, setApplicationsError] = useState('');
 
-  // The company page opens in a new tab, so fetch the session for TopHeader.
   useEffect(() => {
     let mounted = true;
     const loadHeaderUser = async () => {
       const result = await getCurrentUser();
+      if (mounted) setHeaderChecked(true);
       if (!mounted || !result.success || !result.data) return;
       const authUser = result.data;
       const metadata = authUser.user_metadata || {};
@@ -137,6 +142,7 @@ export default function CompanyProfilePage() {
   const [error, setError] = useState('');
   const [showFullAbout, setShowFullAbout] = useState(false);
   const [jobSearch, setJobSearch] = useState('');
+  const [viewerIndex, setViewerIndex] = useState(null);
 
   useEffect(() => {
     let active = true;
@@ -144,23 +150,11 @@ export default function CompanyProfilePage() {
       setIsLoading(true);
       setError('');
       try {
-        // The company route uses the same recruiter ID as the job's recruiter_id.
-        const [companyResult, jobsResult] = await Promise.all([
-          supabase.from('employers').select('*').eq('id', companyId).maybeSingle(),
-          supabase.from('job_postings')
-            .select('id,title,description,location,work_type,employment_type,created_at,status,hiring_status,is_archived')
-            .eq('recruiter_id', companyId)
-            .eq('status', 'active')
-            .eq('hiring_status', 'open')
-            .eq('is_archived', false)
-            .order('created_at', { ascending: false }),
-        ]);
-        if (companyResult.error) throw companyResult.error;
-        if (jobsResult.error) throw jobsResult.error;
-        if (!companyResult.data) throw new Error('This company profile could not be found.');
+        const result = await fetchPublicCompany(companyId);
+        if (!result) throw new Error('This company profile could not be found.');
         if (active) {
-          setCompany(companyResult.data);
-          setJobs(jobsResult.data || []);
+          setCompany(result.company);
+          setJobs(result.jobs);
         }
       } catch (err) {
         if (active) setError(err.message || 'Unable to load this company.');
@@ -182,11 +176,19 @@ export default function CompanyProfilePage() {
   const location = asText(company?.location);
   const website = safeWebsite(company?.website);
   const benefits = asItems(company?.benefits);
-  // The HTML example has gallery and reviews. Render them only if the employer actually supplies data.
-  const gallery = (Array.isArray(company?.gallery_photos) ? company.gallery_photos :
-    Array.isArray(company?.photos) ? company.photos : [])
-    .map((entry) => typeof entry === 'string' ? entry : (entry?.url || entry?.src))
-    .filter((url) => typeof url === 'string' && /^https?:\/\//i.test(url));
+  const gallery = galleryFrom(company?.gallery_photos || company?.photos).map((photo) => photo.url);
+  const isOwner = Boolean(headerUser?.id && headerUser.id === companyId);
+
+  useEffect(() => {
+    if (viewerIndex === null) return undefined;
+    const onKey = (event) => {
+      if (event.key === 'Escape') setViewerIndex(null);
+      if (event.key === 'ArrowRight') setViewerIndex((index) => (index + 1) % gallery.length);
+      if (event.key === 'ArrowLeft') setViewerIndex((index) => (index - 1 + gallery.length) % gallery.length);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [viewerIndex, gallery.length]);
   const reviews = Array.isArray(company?.reviews) ? company.reviews : [];
   const visibleJobs = useMemo(() => jobs.filter((job) =>
     [job.title, job.location, job.work_type].filter(Boolean).join(' ').toLowerCase().includes(jobSearch.trim().toLowerCase())),
@@ -198,8 +200,11 @@ export default function CompanyProfilePage() {
 
   return (
     <div className={`min-h-screen font-sans ${isDarkMode ? 'bg-[#090e15] text-slate-200' : 'bg-[#F3F5F8] text-[#16202A]'}`}>
+      {!headerUser ? (
+        headerChecked ? <GuestHeader isDarkMode={isDarkMode} toggleTheme={() => setIsDarkMode((current) => !current)} /> : <div className="h-16" />
+      ) : (
       <TopHeader
-        user={headerUser || { name: 'Guest', email: 'Sign in to use your account', initials: '?' }}
+        user={headerUser}
         isDarkMode={isDarkMode}
         toggleTheme={() => setIsDarkMode((current) => !current)}
         openProfile={() => {
@@ -213,14 +218,21 @@ export default function CompanyProfilePage() {
           loadApplications();
         } : undefined}
         applicationsCount={applicationCount}
+        onNotificationSelect={(notification) => {
+          if (headerUser?.role === 'recruiter') return navigate('/recruiter-dashboard');
+          navigate(notification?.application_id ? `/candidate-dashboard?application=${notification.application_id}` : '/candidate-dashboard');
+        }}
       />
+      )}
 
       <div className="mx-auto flex max-w-[1200px] flex-col gap-6 px-4 py-7 sm:px-8 sm:py-9 lg:px-10">
-        <Link to={headerUser?.role === 'recruiter' ? '/recruiter-dashboard' : '/candidate-dashboard'}
+        {headerUser && (
+        <Link to={headerUser.role === 'recruiter' ? '/recruiter-dashboard' : '/candidate-dashboard'}
           className={`inline-flex w-fit items-center gap-2 text-sm font-semibold transition-colors hover:text-[#ea6036] ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>
           <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d="m15 18-6-6 6-6" /></svg>
           Back to job search
         </Link>
+        )}
         {isLoading ? (
           <div className={`rounded-[20px] p-10 text-center text-sm ${isDarkMode ? 'bg-[#121b27] text-slate-400' : 'bg-white text-[#4A5565]'}`} role="status">Loading company information…</div>
         ) : error ? (
@@ -242,6 +254,9 @@ export default function CompanyProfilePage() {
                   {industry && <p className={`mt-2 text-sm ${isDarkMode ? 'text-slate-400' : 'text-[#4A5565]'}`}>{industry}</p>}
                   {location && <p className={`mt-1 text-sm ${isDarkMode ? 'text-slate-400' : 'text-[#4A5565]'}`}>{location}</p>}
                 </div>
+                <ShareButton url={companyShareUrl(companyId)} title={`${name} on ResuMatch`} text={`See ${name}'s company profile and open jobs on ResuMatch.`}
+                  isDarkMode={isDarkMode}
+                  className={`min-h-11 rounded-xl border px-5 text-sm font-bold transition-colors ${isDarkMode ? 'border-slate-500 text-white hover:bg-white/10' : 'border-[#1B2A5C] text-[#1B2A5C] hover:bg-slate-50'}`} />
                 {website && (
                   <a href={website} target="_blank" rel="noopener noreferrer"
                     className={`inline-flex min-h-11 items-center rounded-xl border px-5 text-sm font-bold transition-colors ${isDarkMode ? 'border-slate-500 text-white hover:bg-white/10' : 'border-[#1B2A5C] text-[#1B2A5C] hover:bg-[#1B2A5C] hover:text-white'}`}>
@@ -295,21 +310,13 @@ export default function CompanyProfilePage() {
                           {job.description && <p className={`line-clamp-3 text-sm leading-6 ${isDarkMode ? 'text-slate-400' : 'text-[#4A5565]'}`}>{jobTextOnly(job.description)}</p>}
                           <div className="mt-auto flex items-center justify-between gap-3 pt-4">
                             <span className={`text-xs ${isDarkMode ? 'text-slate-400' : 'text-[#4A5565]'}`}>{formatDate(job.created_at)}</span>
-                            <Link to={`/candidate-dashboard/jobs/${encodeURIComponent(job.id)}`} className={`text-sm font-bold hover:underline ${isDarkMode ? 'text-orange-400' : 'text-[#1B2A5C]'}`}>View job</Link>
+                            <Link to={`/jobs/${encodeURIComponent(job.id)}`} className={`text-sm font-bold hover:underline ${isDarkMode ? 'text-orange-400' : 'text-[#1B2A5C]'}`}>View job</Link>
                           </div>
                         </article>
                       ))}
                     </div>
                   )}
                 </Section>
-
-                {gallery.length > 0 && (
-                  <Section isDarkMode={isDarkMode} id="gallery" title="Life & Culture">
-                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                      {gallery.map((url, index) => <img key={`${url}-${index}`} src={url} alt={`${name} company photo ${index + 1}`} loading="lazy" className="h-44 w-full rounded-xl bg-[#E6F4F3] object-cover" />)}
-                    </div>
-                  </Section>
-                )}
 
                 {reviews.length > 0 && (
                   <Section isDarkMode={isDarkMode} id="reviews" title="Recent reviews">
@@ -329,7 +336,8 @@ export default function CompanyProfilePage() {
                 )}
               </main>
 
-              <aside className="rounded-[20px] bg-[#1B2A5C] p-7 text-white lg:sticky lg:top-6">
+              <div className="space-y-6">
+              <aside className="rounded-[20px] bg-[#1B2A5C] p-7 text-white">
                 <h2 className="mb-6 text-xs font-bold uppercase tracking-[0.12em] text-[#BFC8E6]">At a glance</h2>
                 <dl className="space-y-5">
                   {industry && <div><dt className="text-sm text-[#BFC8E6]">Industry</dt><dd className="mt-1 font-bold">{industry}</dd></div>}
@@ -339,6 +347,27 @@ export default function CompanyProfilePage() {
                   {website && <div><dt className="text-sm text-[#BFC8E6]">Website</dt><dd className="mt-1 break-all text-sm font-semibold"><a href={website} target="_blank" rel="noopener noreferrer" className="hover:underline">{company.website} ↗</a></dd></div>}
                 </dl>
               </aside>
+
+              {(gallery.length > 0 || isOwner) && (
+                <section id="gallery" aria-labelledby="gallery-title" className={`scroll-mt-6 rounded-[20px] p-5 shadow-sm ${isDarkMode ? 'border border-white/10 bg-[#121b27]' : 'bg-white'}`}>
+                  <h2 id="gallery-title" className={`mb-4 text-xs font-bold uppercase tracking-[0.12em] ${isDarkMode ? 'text-slate-400' : 'text-[#4A5565]'}`}>Life &amp; Culture</h2>
+                  {gallery.length > 0 ? (
+                    <div className="grid grid-cols-2 gap-2">
+                      {gallery.map((url, index) => (
+                        <button key={url} type="button" onClick={() => setViewerIndex(index)} aria-label={`View photo ${index + 1} of ${gallery.length}`}
+                          className={`overflow-hidden rounded-xl bg-[#E6F4F3] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#ea6036] ${index === 0 && gallery.length % 2 === 1 ? 'col-span-2 aspect-[16/9]' : 'aspect-square'}`}>
+                          <img src={url} alt={`${name} photo ${index + 1}`} loading="lazy" className="h-full w-full object-cover transition-transform duration-300 hover:scale-105 motion-reduce:transform-none" />
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className={`text-sm ${isDarkMode ? 'text-slate-400' : 'text-[#4A5565]'}`}>
+                      Add up to {MAX_GALLERY_PHOTOS} photos from <Link to="/recruiter-dashboard" className="font-semibold text-[#ea6036] hover:underline">your company profile</Link> to show candidates what it's like to work with you.
+                    </p>
+                  )}
+                </section>
+              )}
+              </div>
             </div>
           </>
         )}
@@ -350,6 +379,21 @@ export default function CompanyProfilePage() {
           isDarkMode={isDarkMode}
           onClose={() => setProfileOpen(false)}
         />
+      )}
+      {viewerIndex !== null && gallery[viewerIndex] && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/85 p-4" role="dialog" aria-modal="true" aria-label={`${name} photo ${viewerIndex + 1} of ${gallery.length}`} onClick={() => setViewerIndex(null)}>
+          <img src={gallery[viewerIndex]} alt={`${name} photo ${viewerIndex + 1}`} className="max-h-[85vh] max-w-full rounded-xl object-contain shadow-2xl" onClick={(event) => event.stopPropagation()} />
+          <button type="button" onClick={() => setViewerIndex(null)} aria-label="Close photo" className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full bg-white/15 text-white hover:bg-white/25">
+            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
+          {gallery.length > 1 && (
+            <>
+              <button type="button" onClick={(event) => { event.stopPropagation(); setViewerIndex((viewerIndex - 1 + gallery.length) % gallery.length); }} aria-label="Previous photo" className="absolute left-3 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/15 text-2xl text-white hover:bg-white/25">‹</button>
+              <button type="button" onClick={(event) => { event.stopPropagation(); setViewerIndex((viewerIndex + 1) % gallery.length); }} aria-label="Next photo" className="absolute right-3 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/15 text-2xl text-white hover:bg-white/25">›</button>
+              <p className="absolute bottom-4 left-1/2 -translate-x-1/2 text-sm font-semibold text-white/80">{viewerIndex + 1} / {gallery.length}</p>
+            </>
+          )}
+        </div>
       )}
       {isApplicationsOpen && (
         <ApplicationsModal

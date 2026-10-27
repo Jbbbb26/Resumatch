@@ -1,20 +1,8 @@
-/**
- * @typedef {Object} JobListing
- * @property {string} id
- * @property {string} title
- * @property {string|null} location
- * @property {string|null} work_type
- * @property {string|null} employment_type
- * @property {string} created_at
- * @property {'open'|'closed'} [hiring_status]
- * @property {boolean} [is_archived]
- * @property {string|null} [archived_at]
- * @property {string|null} [closed_at]
- */
+import { formatSalary } from '../../data/jobOptions';
+import { ShareButton, jobShareUrl } from './ShareButton';
 
 const formatPostedDate = (createdAt) => `Posted ${new Date(createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`;
 
-/** @param {{ job: JobListing, applicantCount: number, topMatch: string, isDarkMode: boolean, isPending: boolean, onReview: (job: JobListing) => void, onEdit: (job: JobListing) => void, onArchive: (job: JobListing) => void, onRestore: (job: JobListing) => void, onToggleHiring: (job: JobListing) => void }} props */
 export function JobListingItem({
   job,
   applicantCount,
@@ -47,6 +35,7 @@ export function JobListingItem({
         </div>
         <div className={`mt-1.5 text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
           {job.location || 'Location not specified'} - {job.work_type || 'Work type not specified'} - {job.employment_type || 'Employment type not specified'} - {formatPostedDate(job.created_at)}
+          {formatSalary(job) && <> - <span className="font-semibold">{formatSalary(job)}</span></>}
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-5">
@@ -76,6 +65,10 @@ export function JobListingItem({
         <div className="flex items-center gap-2">
           <button type="button" onClick={() => onReview(job)} className={actionBtn}>Review</button>
           <button type="button" onClick={() => onEdit(job)} className={actionBtn}>Edit</button>
+          {!isArchived && (
+            <ShareButton url={jobShareUrl(job.id)} title={job.title} text={`We're hiring: ${job.title}. Apply on ResuMatch.`}
+              isDarkMode={isDarkMode} className={actionBtn} />
+          )}
           {isArchived ? (
             <button type="button" onClick={() => onRestore(job)} disabled={isPending} className={actionBtn} aria-label={`Restore ${job.title}`}>Restore</button>
           ) : (

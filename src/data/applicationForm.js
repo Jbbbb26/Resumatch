@@ -136,11 +136,6 @@ export function createApplicationForm(profile = {}) {
   };
 }
 
-/**
- * @typedef {{ id: string, recruiter_id: string, title: string, company_name: string, location: string, work_type: string, employment_type: string, description: string, requirements: string, created_at: string, hiring_status: 'open'|'closed', is_archived: boolean, match: number|null }} Job
- * @typedef {{ fullName: string, email: string, phone: string, location: string, profileUrl: string, summary: string, education: Array<object>, qualifications: Array<object>, skills: string[], languages: Array<object>, yearsExperience: string|number, coverNote: string }} ApplicantDetails
- */
-
 export function getCandidateSkills(profile) {
   const values = profile?.skills || profile?.resume_data?.skills || [];
   return (Array.isArray(values) ? values : [])

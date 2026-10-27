@@ -268,6 +268,8 @@ export function calculateMatchScore({ applicant = {}, job = {}, semanticSimilari
     capsApplied,
     matchedSkills: matchedSkills.length,
     requiredSkills: requiredSkills.size,
+    matchedSkillNames: matchedSkills,
+    missingSkillNames: [...requiredSkills].filter((skill) => !matchedSkills.includes(skill)),
   };
   return { score: Math.max(0, Math.min(100, Math.round(score * 100))), breakdown };
 }

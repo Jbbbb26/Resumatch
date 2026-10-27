@@ -8,7 +8,7 @@ function formatTimestamp(value) {
   return value ? new Date(value).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : 'Date unavailable';
 }
 
-export function CandidateDrawer({ application, isDarkMode, onClose, onSaveNotes }) {
+export function CandidateDrawer({ application, isDarkMode, onClose, onSaveNotes, onEditInterview }) {
   const [history, setHistory] = useState([]);
   const [historyError, setHistoryError] = useState('');
   const [notes, setNotes] = useState(application.notes || '');
@@ -46,8 +46,6 @@ export function CandidateDrawer({ application, isDarkMode, onClose, onSaveNotes 
     return () => { cancelled = true; };
   }, [application.id, application.stage_updated_at]);
 
-  // The Quick Apply confirmation saves the profile data at the time of submission.
-  // Prefer the submitted resume reference, falling back to older profile records.
   const submittedDetails = application.applicant_details && typeof application.applicant_details === 'object'
     ? application.applicant_details : null;
   const resumeValue = submittedDetails?.resumeFilePath || submittedDetails?.resumeFileUrl
@@ -133,6 +131,39 @@ export function CandidateDrawer({ application, isDarkMode, onClose, onSaveNotes 
               {(submittedDetails.resumeFileName || submittedDetails.resumeFilePath) && (
                 <p className={`mt-3 text-xs ${muted}`}>Submitted resume reference: {submittedDetails.resumeFileName || submittedDetails.resumeFilePath}</p>
               )}
+            </section>
+          )}
+
+          {(application.stage === 'interview' || application.interview_at) && (
+            <section className={`rounded-2xl border p-4 ${card}`}>
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <h3 className={`text-xs font-bold uppercase tracking-wider ${muted}`}>Interview</h3>
+                {application.stage === 'interview' && onEditInterview && (
+                  <button type="button" onClick={() => onEditInterview(application)} className="text-xs font-bold text-[#ea6036] hover:underline">
+                    {application.interview_at ? 'Edit / reschedule' : 'Schedule interview'}
+                  </button>
+                )}
+              </div>
+              {application.interview_at ? (
+                <dl className="space-y-2 text-sm">
+                  <div className="flex gap-2"><dt className={muted}>When</dt><dd className={heading}>{formatTimestamp(application.interview_at)}</dd></div>
+                  {application.interview_mode && <div className="flex gap-2"><dt className={muted}>Format</dt><dd className={heading}>{application.interview_mode}</dd></div>}
+                  {application.interview_location && <div className="flex gap-2"><dt className={muted}>Where</dt><dd className={`${heading} break-all`}>{application.interview_location}</dd></div>}
+                  {application.interview_notes && <div><dt className={muted}>Message to candidate</dt><dd className={`${heading} whitespace-pre-line`}>{application.interview_notes}</dd></div>}
+                </dl>
+              ) : (
+                <p className={`text-sm ${muted}`}>No interview date set yet. The candidate can't see when to attend.</p>
+              )}
+            </section>
+          )}
+
+          {application.stage === 'rejected' && (application.rejection_reason || application.candidate_feedback) && (
+            <section className={`rounded-2xl border p-4 ${card}`}>
+              <h3 className={`mb-3 text-xs font-bold uppercase tracking-wider ${muted}`}>Rejection</h3>
+              <dl className="space-y-2 text-sm">
+                {application.rejection_reason && <div><dt className={muted}>Internal reason</dt><dd className={`${heading} whitespace-pre-line`}>{application.rejection_reason}</dd></div>}
+                {application.candidate_feedback && <div><dt className={muted}>Feedback shared with candidate</dt><dd className={`${heading} whitespace-pre-line`}>{application.candidate_feedback}</dd></div>}
+              </dl>
             </section>
           )}
 

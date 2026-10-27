@@ -1,17 +1,28 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../../supabaseClient.js';
+import { apiFetch } from '../data/services/apiClient.js';
 
-const JOB_SELECT = 'id,recruiter_id,title,location,work_type,employment_type,description,requirements,created_at,status,hiring_status,is_archived';
+export async function fetchMatchAnalyses(jobIds) {
+  if (!jobIds.length) return { analyses: {}, error: '' };
+  const response = await apiFetch('/api/match-analysis', {
+    method: 'POST',
+    body: JSON.stringify({ jobIds }),
+  });
+  if (!response?.success) {
+    console.error('Match analysis failed:', response?.message);
+    return { analyses: {}, error: response?.message || 'Match analysis is unavailable right now.' };
+  }
+  return { analyses: response.data || {}, error: '' };
+}
 
-// Clinical nursing jobs need qualifications that an embedding score cannot verify.
-// This is an interim, client-side safeguard. The Supabase recommendation RPC should
-// eventually apply mandatory qualification rules itself, too.
+const JOB_SELECT = 'id,recruiter_id,title,location,work_type,employment_type,experience_level,job_category,salary_min,salary_max,description,requirements,created_at,status,hiring_status,is_archived';
+
 const isNursingPosition = (title = '') =>
   /\b(nurse|nursing)\b/i.test(title) &&
   !/\b(software|developer|web|application|programmer)\b/i.test(title);
 
 function getCandidateNursingEvidence(profile) {
-  if (!profile) return null; // No profile: don't claim that eligibility was assessed.
+  if (!profile) return null;
 
   const  resume = profile.resume_data && typeof profile.resume_data === 'object'
     ? profile.resume_data
@@ -24,7 +35,6 @@ function getCandidateNursingEvidence(profile) {
     : (Array.isArray(resume.experience) ? resume.experience : []);
   const education = Array.isArray(resume.education) ? resume.education : [];
 
-  // Read candidate-provided / parsed qualifications, not job text.
   const hasResumeEvidence = skills.length > 0 || experience.length > 0 || education.length > 0;
   if (!hasResumeEvidence) return null;
 
@@ -32,12 +42,9 @@ function getCandidateNursingEvidence(profile) {
   const experienceText = JSON.stringify(experience).toLowerCase();
   const skillsText = JSON.stringify(skills).toLowerCase();
 
-  // A nursing degree / clinical nursing position strongly signals domain relevance.
   if (/\b(bsn|bachelor(?: of science)? (?:in|of) nursing|nursing degree|nursing diploma)\b/i.test(educationText)) return true;
   if (/\b(registered nurse|staff nurse|licensed practical nurse|nurse practitioner|clinical nurse|nursing assistant)\b/i.test(experienceText)) return true;
 
-  // Otherwise require at least TWO relevant clinical skills. Broad abilities such
-  // as communication, teamwork and computer skills are not clinical evidence.
   const clinicalSignals = [
     /\b(patient care|patient assessment)\b/i,
     /\b(bls|basic life support|acls|advanced cardiac life support)\b/i,
@@ -64,6 +71,8 @@ async function fetchJobs(candidateId, jobId) {
 
   let matchById = new Map();
   let nursingEvidence = null;
+  let analyses = {};
+  let analysisError = '';
   if (candidateId) {
     const [{ data: recommendations, error: matchError }, { data: profile, error: profileError }] = await Promise.all([
       supabase.rpc('get_recommended_jobs', {
@@ -84,6 +93,9 @@ async function fetchJobs(candidateId, jobId) {
       semanticSimilarity: Number(job.similarity),
       matchedKeywords: job.matched_keywords || job.matchedKeywords || null,
     }]));
+    const visibleIds = new Set((rows || []).map((job) => job.id));
+    const analyseIds = jobId ? [jobId] : [...matchById.keys()].filter((id) => visibleIds.has(id));
+    ({ analyses, error: analysisError } = await fetchMatchAnalyses(analyseIds));
   }
 
   const recruiterIds = [...new Set((rows || []).map((job) => job.recruiter_id).filter(Boolean))];
@@ -98,15 +110,16 @@ async function fetchJobs(candidateId, jobId) {
     const outOfField = candidateId && nursingRole && nursingEvidence === false;
     const unverified = candidateId && nursingRole && nursingEvidence === null;
     const recommended = matchById.get(job.id);
+    const matchAnalysis = analyses[job.id] || null;
 
     return {
       ...job,
       company_name: companies.get(job.recruiter_id) || 'Company name not provided',
       semanticSimilarity: recommended?.semanticSimilarity ?? null,
-      // A 65% semantic similarity is not a 65% qualification match.
-      // Show 0 for clearly unrelated nursing roles; show no score if the
-      // candidate has no parsed information to make that determination.
-      match: outOfField ? 0 : (unverified ? null : (recommended?.match ?? null)),
+      aiSimilarity: recommended?.match ?? null,
+      matchAnalysis,
+      matchAnalysisError: matchAnalysis ? '' : analysisError,
+      match: outOfField ? 0 : (unverified ? null : (matchAnalysis?.score ?? null)),
       matched_keywords: outOfField ? [] : (recommended?.matchedKeywords || null),
       qualification_mismatch: Boolean(outOfField),
     };

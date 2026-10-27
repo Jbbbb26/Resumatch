@@ -12,7 +12,6 @@ function buildApplicationSnapshot(profile, authUser, resumeFile) {
   const populatedProfile = {
     ...profile,
     email: authUser?.email || profile?.email || '',
-    // The parsed resume may have skills even if the top-level skills column is empty.
     skills: Array.isArray(profile?.skills) && profile.skills.length ? profile.skills : (resumeData.skills || []),
     education: Array.isArray(profile?.education) && profile.education.length ? profile.education : (resumeData.education || []),
   };
@@ -28,9 +27,7 @@ function buildApplicationSnapshot(profile, authUser, resumeFile) {
     education,
     languages: (base.languages || []).filter((entry) => hasText(String(entry.language || ''))),
     qualifications: (base.qualifications || []).filter((entry) => hasText(String(entry.name || ''))),
-    // Preserve all parsed experience in the saved applicant_details JSON snapshot.
     experience: Array.isArray(resumeData.experience) ? resumeData.experience : [],
-    // The resume is referenced in Storage, not duplicated or re-uploaded.
     resumeBucket: resumeFile ? 'resumes' : null,
     resumeFilePath: resumeFile?.name || null,
     resumeFileName: resumeFile?.name || null,
@@ -61,11 +58,6 @@ function CheckIcon({ good }) {
   );
 }
 
-/**
- * Quick Apply: read the candidate's latest saved profile and resume, then let them
- * explicitly confirm before using the existing apply_to_job RPC through onSubmit.
- * This replaces the long repeat-entry form, not the Supabase submission logic.
- */
 export function ApplicationFormModal({ job, profile, isDarkMode, isSubmitting, submitError, onSubmit, onClose, onEditProfile }) {
   const [snapshot, setSnapshot] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -102,7 +94,6 @@ export function ApplicationFormModal({ job, profile, isDarkMode, isSubmitting, s
       const uploaded = (objects || [])
         .filter((file) => file.name?.startsWith(`${authUser.id}-resume.`))
         .sort((a, b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0))[0];
-      // Some existing candidate records store a reference directly on the profile.
       const savedResumeUrl = freshProfile?.resumeFileUrl || freshProfile?.resume_file_url;
       const resumeFile = uploaded || (hasText(savedResumeUrl) ? { existingUrl: savedResumeUrl } : null);
       setSnapshot(buildApplicationSnapshot(freshProfile || profile || {}, authUser, resumeFile));
@@ -167,7 +158,6 @@ export function ApplicationFormModal({ job, profile, isDarkMode, isSubmitting, s
     if (onEditProfile) {
       onEditProfile();
     } else {
-      // Standalone Job Details page: return to the Candidate Dashboard and open profile.
       window.location.assign('/candidate-dashboard#edit-profile');
     }
   };

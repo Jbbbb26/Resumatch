@@ -424,3 +424,9 @@ entrypoint = "./functions/send-emailjs-otp/index.ts"
 # Specifies static files to be bundled with the function. Supports glob patterns.
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/send-emailjs-otp/*.html" ]
+
+[functions.send-notification-email]
+enabled = true
+# Called by a Database Webhook, which authenticates with the x-webhook-secret header.
+verify_jwt = false
+entrypoint = "./functions/send-notification-email/index.ts"

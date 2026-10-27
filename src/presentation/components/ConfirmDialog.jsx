@@ -1,9 +1,11 @@
 import { useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 
 export function ConfirmDialog({
   title,
   message,
   confirmLabel = 'Confirm',
+  workingLabel = 'Archiving…',
   isDarkMode,
   isWorking = false,
   onConfirm,
@@ -20,8 +22,8 @@ export function ConfirmDialog({
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [isWorking, onCancel]);
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="presentation">
+  return createPortal(
+    <div className="fixed inset-0 z-[80] flex items-center justify-center p-4" role="presentation">
       <button
         type="button"
         aria-label="Close confirmation dialog"
@@ -53,10 +55,11 @@ export function ConfirmDialog({
             disabled={isWorking}
             className={`rounded-xl border px-4 py-2 text-sm font-bold transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-500 disabled:cursor-wait disabled:opacity-60 ${isDarkMode ? 'border-red-900/50 bg-red-900/20 text-red-300 hover:bg-red-900/30' : 'border-red-200 bg-red-50 text-red-700 hover:bg-red-100'}`}
           >
-            {isWorking ? 'Archiving…' : confirmLabel}
+            {isWorking ? workingLabel : confirmLabel}
           </button>
         </div>
       </section>
-    </div>
+    </div>,
+    document.body,
   );
 }

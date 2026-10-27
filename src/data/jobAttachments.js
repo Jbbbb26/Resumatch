@@ -10,10 +10,6 @@ export const ATTACHMENT_RULES = Object.freeze({
   },
 });
 
-/**
- * @typedef {{ id: string, job_id: string, file_name: string, file_path: string, file_size: number, mime_type: string, uploaded_by: string, created_at: string, uploadStatus?: 'uploaded' }} JobAttachment
- */
-
 export function formatFileSize(bytes) {
   if (!Number.isFinite(bytes) || bytes < 0) return 'Unknown size';
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;

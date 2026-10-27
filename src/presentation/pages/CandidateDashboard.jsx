@@ -2,9 +2,11 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { logoutUser, getCurrentUser, updateUserMetadata, createPublicProfile } from "../../data/services/authService";
 import { TopHeader } from "../components/TopHeader";
-// File on disk is "FIlterModal.jsx" (capital I). The import must match exactly or the Linux build on Railway fails.
-import { FilterModal } from "../components/FilterModal";
+import { ShareButton, jobShareUrl } from "../components/ShareButton";
+import { FilterModal, DEFAULT_JOB_FILTERS, countActiveFilters, jobMatchesFilters } from "../components/FilterModal";
+import { formatSalary } from "../../data/jobOptions";
 import { ApplicationsModal } from "../components/ApplicationsModal";
+import { ApplicationDetailModal } from "../components/ApplicationDetailModal";
 import { ProfileModal } from "../components/ProfileModal";
 import { supabase } from "../../../supabaseClient.js";
 import { ApplicationFormModal } from "../components/ApplicationFormModal";
@@ -12,8 +14,9 @@ import { JobDescription } from "../components/JobDescription";
 import { AttachmentList } from "../components/AttachmentList";
 import { useApplyToJob } from "../../hooks/useApplyToJob";
 import { useJobAttachments } from "../../hooks/useJobAttachments";
-import { useJobs } from "../../hooks/useJobs";
+import { useJobs, fetchMatchAnalyses } from "../../hooks/useJobs";
 import { jobTextOnly } from "../../data/services/jobText";
+import { MatchAnalysis } from "../components/MatchAnalysis";
 
 const profileFields = ["firstName", "lastName", "resumeFileUrl", "resume_data", "skills", "experience"];
 
@@ -33,11 +36,34 @@ const matchScoreOf = (job) => {
   return raw != null && Number.isFinite(score) && score >= 0 ? Math.round(score) : null;
 };
 
+const JOB_SORTS = [
+  { value: 'match', label: 'Best match' },
+  { value: 'newest', label: 'Newest' },
+  { value: 'salary', label: 'Highest salary' },
+];
+const timeOf = (job) => new Date(job.created_at || 0).getTime() || 0;
+const salaryOf = (job) => {
+  const value = Number(job.salary_max ?? job.salary_min);
+  return job.salary_max == null && job.salary_min == null ? null : (Number.isFinite(value) ? value : null);
+};
+const byDescending = (valueOf) => (a, b) => {
+  const left = valueOf(a);
+  const right = valueOf(b);
+  if (left === right) return timeOf(b) - timeOf(a);
+  if (left === null) return 1;
+  if (right === null) return -1;
+  return right - left;
+};
+const JOB_COMPARATORS = {
+  match: byDescending(matchScoreOf),
+  newest: (a, b) => timeOf(b) - timeOf(a),
+  salary: byDescending(salaryOf),
+};
+
 function JobSkeleton({ isDarkMode }) {
   return <div className={`h-[132px] rounded-2xl animate-pulse ${isDarkMode ? 'bg-[#121b27]' : 'bg-white border border-slate-200'}`} />;
 }
 
-/* ------------------------------------------------------------------ Left column: JobStreet-inspired job cards */
 function JobListItem({ job, isSelected, isApplied, isSaved, isSaving, onSelect, onToggleSave, logoUrl, isDarkMode }) {
   const company = job.company_name || 'Company';
   const initials = company.split(/\s+/).filter(Boolean).slice(0, 2).map((word) => word[0]).join('').toUpperCase() || '?';
@@ -73,7 +99,6 @@ function JobListItem({ job, isSelected, isApplied, isSaved, isSaving, onSelect, 
             )}
           </div>
 
-          {/* Real company logo when available, company initials as a fallback. */}
           <div className={`relative flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl border ${isDarkMode ? 'border-white/10 bg-white/10 text-slate-200' : 'border-slate-200 bg-slate-50 text-slate-600'}`}>
             <span className="text-base font-bold" aria-hidden="true">{initials}</span>
             {logoUrl && (
@@ -91,6 +116,8 @@ function JobListItem({ job, isSelected, isApplied, isSaved, isSaving, onSelect, 
         <div className="mt-3 flex flex-wrap items-center gap-1.5">
           {job.employment_type && <span className={`rounded-md px-2 py-1 text-[10px] font-semibold ${chip}`}>{job.employment_type}</span>}
           {job.work_type && <span className={`rounded-md px-2 py-1 text-[10px] font-semibold ${chip}`}>{job.work_type}</span>}
+          {job.experience_level && <span className={`rounded-md px-2 py-1 text-[10px] font-semibold ${chip}`}>{job.experience_level}</span>}
+          {formatSalary(job) && <span className={`rounded-md px-2 py-1 text-[10px] font-semibold ${isDarkMode ? 'bg-[#3c8eec]/15 text-[#8bbcf5]' : 'bg-blue-50 text-blue-700'}`}>{formatSalary(job)}</span>}
           {isApplied && <span className="rounded-md bg-emerald-600 px-2 py-1 text-[10px] font-bold text-white">Applied</span>}
           {isClosed && <span className="rounded-md bg-amber-500/15 px-2 py-1 text-[10px] font-semibold text-amber-600">Not hiring</span>}
           {job.qualification_mismatch && <span className="rounded-md bg-amber-500/15 px-2 py-1 text-[10px] font-semibold text-amber-600">Nursing qualifications not found</span>}
@@ -115,7 +142,10 @@ function JobListItem({ job, isSelected, isApplied, isSaved, isSaving, onSelect, 
         )}
       </button>
 
-      {/* Separate button so saving doesn't open the job details. */}
+      <div className="absolute bottom-3 right-14 z-10">
+        <ShareButton variant="icon" url={jobShareUrl(job.id)} title={`${job.title} at ${job.company_name}`}
+          text={`Check out this job on ResuMatch: ${job.title} at ${job.company_name}`} isDarkMode={isDarkMode} />
+      </div>
       <button
         type="button"
         disabled={isSaving}
@@ -133,7 +163,6 @@ function JobListItem({ job, isSelected, isApplied, isSaved, isSaving, onSelect, 
   );
 }
 
-/* Saved jobs appear in a compact right-hand column, like the supplied JobStreet reference. */
 function SavedJobCard({ saved, job, company, logoUrl, isDarkMode, isSaving, onOpen, onRemove }) {
   const title = job.title || 'Job listing';
   const initials = (company || 'Company').split(/\s+/).filter(Boolean).slice(0, 2)
@@ -186,9 +215,8 @@ function SavedJobCard({ saved, job, company, logoUrl, isDarkMode, isSaving, onOp
   );
 }
 
-/* JobStreet-inspired detail modal. Uses real job fields and existing application workflow. */
 function JobDetailsModal({ job, profile, userId, application, isDarkMode, logoUrl, companyInfo, isSaved, isSaving,
-  onToggleSave, onClose, onApplied, onApplySuccess, onEditProfile }) {
+  onToggleSave, onClose, onApplied, onApplySuccess, onEditProfile, onViewApplication, isAnalysing = false }) {
   const closeButtonRef = useRef(null);
   const [isApplicationOpen, setApplicationOpen] = useState(false);
   const [submittedApplication, setSubmittedApplication] = useState(null);
@@ -197,12 +225,13 @@ function JobDetailsModal({ job, profile, userId, application, isDarkMode, logoUr
   const match = matchScoreOf(job);
   const hiringOpen = (job.hiring_status || 'open') === 'open' && !job.is_archived;
 
-  // Use the same 30-day rejected-application cooldown as JobCard.
   const priorApplication = submittedApplication || application;
   let applyState = 'new';
   let reapplyOn = null;
   if (priorApplication) {
-    if (priorApplication.status === 'Rejected') {
+    if (priorApplication.status === 'Withdrawn') {
+      applyState = 'reapply';
+    } else if (priorApplication.status === 'Rejected') {
       const rejectedAt = new Date(priorApplication.statusUpdatedAt || priorApplication.appliedAt);
       reapplyOn = new Date(rejectedAt.getTime() + 30 * 86400000);
       applyState = Date.now() >= reapplyOn.getTime() ? 'reapply' : 'cooldown';
@@ -242,7 +271,6 @@ function JobDetailsModal({ job, profile, userId, application, isDarkMode, logoUr
 
   useEffect(() => {
     const handleKeys = (event) => {
-      // The application form has its own Escape handling and confirmation.
       if (isApplicationOpen) return;
       if (event.key === 'Escape') {
         event.preventDefault();
@@ -268,7 +296,6 @@ function JobDetailsModal({ job, profile, userId, application, isDarkMode, logoUr
   }, [isApplicationOpen, onClose]);
 
   const downloadAttachment = async (attachment) => {
-    // Open a tab synchronously to avoid popup blockers after signed URL retrieval.
     const downloadWindow = window.open('about:blank', '_blank');
     const url = await getDownloadUrl(attachment.file_path);
     if (!url) { downloadWindow?.close(); return false; }
@@ -290,7 +317,6 @@ function JobDetailsModal({ job, profile, userId, application, isDarkMode, logoUr
         className="absolute inset-0 h-full w-full cursor-default bg-[#2B3342]/80 backdrop-blur-[3px]" />
       <div role="dialog" aria-modal="true" aria-labelledby="candidate-job-modal-title"
         className={`relative flex max-h-[calc(100dvh-1rem)] w-full max-w-[860px] flex-col overflow-hidden rounded-2xl border shadow-2xl sm:max-h-[calc(100dvh-2.5rem)] sm:rounded-3xl ${isDarkMode ? 'border-white/10 bg-[#101a28]' : 'border-[#E3E7EE] bg-white'}`}>
-        {/* Header: same fixed action-bar layout as the supplied HTML template. */}
         <div className={`flex shrink-0 flex-wrap items-center gap-2 border-b px-4 py-3 sm:gap-3 sm:px-6 sm:py-4 ${isDarkMode ? 'border-white/10' : 'border-[#E3E7EE]'}`}>
           <div className="min-w-0 flex-1 basis-[140px]">
             <p className={`truncate text-sm font-bold sm:text-base ${heading}`}>{job.title}</p>
@@ -301,10 +327,19 @@ function JobDetailsModal({ job, profile, userId, application, isDarkMode, logoUr
             <svg width="17" height="17" viewBox="0 0 24 24" fill={isSaved ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M6 4.75A1.75 1.75 0 0 1 7.75 3h8.5A1.75 1.75 0 0 1 18 4.75V21l-6-4-6 4V4.75Z" /></svg>
             {isSaving ? 'Saving…' : isSaved ? 'Saved' : 'Save'}
           </button>
+          <ShareButton url={jobShareUrl(job.id)} title={`${job.title} at ${company}`} text={`Check out this job on ResuMatch: ${job.title} at ${company}`}
+            isDarkMode={isDarkMode}
+            className={`min-h-10 rounded-xl border px-3 text-xs font-bold sm:min-h-11 sm:px-4 sm:text-sm ${isDarkMode ? 'border-white/20 text-white hover:bg-white/10' : 'border-[#1B2A5C] text-[#1B2A5C] hover:bg-slate-50'}`} />
           <button type="button" onClick={() => setApplicationOpen(true)} disabled={!canApply || isSubmitting}
             className="min-h-10 rounded-xl bg-[#C2410C] px-3 text-xs font-bold text-white hover:bg-[#a9360b] disabled:cursor-not-allowed disabled:bg-slate-400 sm:min-h-11 sm:px-5 sm:text-sm">
             {isSubmitting ? 'Submitting…' : applyLabel}
           </button>
+          {application?.id && ['applied', 'cooldown'].includes(applyState) && onViewApplication && (
+            <button type="button" onClick={() => onViewApplication(application.id)}
+              className={`min-h-10 rounded-xl px-2 text-xs font-bold underline-offset-2 hover:underline sm:min-h-11 sm:text-sm ${isDarkMode ? 'text-slate-200' : 'text-[#1B2A5C]'}`}>
+              {applyState === 'applied' ? 'View / withdraw' : 'View application'}
+            </button>
+          )}
           <button ref={closeButtonRef} type="button" aria-label="Close job details" onClick={onClose}
             className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full sm:h-11 sm:w-11 ${isDarkMode ? 'bg-white/10 text-white hover:bg-white/20' : 'bg-[#EEF1F7] text-[#16202A] hover:bg-slate-200'}`}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
@@ -312,7 +347,6 @@ function JobDetailsModal({ job, profile, userId, application, isDarkMode, logoUr
         </div>
 
         <div className={`min-h-0 flex-1 space-y-7 overflow-y-auto overscroll-contain px-5 py-6 sm:space-y-8 sm:px-10 sm:py-8 ${text}`}>
-          {/* Job title, employer logo and metadata */}
           <section className="space-y-4">
             <div className="flex items-center gap-3 sm:gap-4">
               <div className={`relative flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-2xl border text-lg font-bold ${isDarkMode ? 'border-white/10 bg-white/10 text-white' : 'border-[#E3E7EE] bg-[#E6F4F3] text-[#0E6F6B]'}`}>
@@ -329,6 +363,9 @@ function JobDetailsModal({ job, profile, userId, application, isDarkMode, logoUr
               {job.location && <span className={`rounded-full px-3.5 py-2 ${chip}`}>{job.location}</span>}
               {job.work_type && <span className={`rounded-full px-3.5 py-2 ${chip}`}>{job.work_type}</span>}
               {job.employment_type && <span className={`rounded-full px-3.5 py-2 ${chip}`}>{job.employment_type}</span>}
+              {job.experience_level && <span className={`rounded-full px-3.5 py-2 ${chip}`}>{job.experience_level}</span>}
+              {job.job_category && <span className={`rounded-full px-3.5 py-2 ${chip}`}>{job.job_category}</span>}
+              {formatSalary(job) && <span className={`rounded-full px-3.5 py-2 ${isDarkMode ? 'bg-[#3c8eec]/15 text-[#8bbcf5]' : 'bg-blue-50 text-blue-700'}`}>{formatSalary(job)}</span>}
               <span className={`rounded-full px-3.5 py-2 ${hiringOpen ? 'bg-emerald-500/10 text-emerald-600' : 'bg-amber-500/10 text-amber-600'}`}>
                 {hiringOpen ? 'Open for applications' : 'Not hiring'}
               </span>
@@ -339,13 +376,15 @@ function JobDetailsModal({ job, profile, userId, application, isDarkMode, logoUr
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h3 className={`text-lg font-bold ${heading}`}>How you match</h3>
-                <p className={`mt-1 text-sm ${muted}`}>AI similarity between your resume and the job listing; not a qualification guarantee.</p>
+                <p className={`mt-1 text-sm ${muted}`}>Based on your skills, experience and education compared with this job's requirements.</p>
               </div>
               <div className={`rounded-xl border px-4 py-2 text-center ${isDarkMode ? 'border-emerald-800 bg-emerald-950/30' : 'border-emerald-200 bg-emerald-50'}`}>
-                <div className="text-xl font-extrabold text-[#4fa784]">{match === null ? '—' : `${match}%`}</div>
+                <div className="text-xl font-extrabold text-[#4fa784]">{match === null ? (isAnalysing ? '…' : '—') : `${match}%`}</div>
                 <div className="text-[10px] font-semibold uppercase tracking-wide text-[#4fa784]">Match score</div>
               </div>
             </div>
+            <MatchAnalysis job={job} profile={profile} isDarkMode={isDarkMode} isLoading={isAnalysing}
+              className={`mt-5 border-t pt-5 ${isDarkMode ? 'border-white/10' : 'border-[#E3E7EE]'}`} />
           </section>
 
           {job.description && (
@@ -363,7 +402,6 @@ function JobDetailsModal({ job, profile, userId, application, isDarkMode, logoUr
           <AttachmentList attachments={attachments} isLoading={attachmentsLoading} error={attachmentsError}
             isDarkMode={isDarkMode} onDownload={downloadAttachment} />
 
-          {/* Company summary matches the supplied navy reference, with real employer data only. */}
           <section className="space-y-4 rounded-2xl bg-[#1B2A5C] p-6 text-white sm:p-7">
             <p className="text-xs font-bold uppercase tracking-[0.13em] text-[#BFC8E6]">Company profile</p>
             <h3 className="text-xl font-bold sm:text-2xl">{company}</h3>
@@ -418,7 +456,10 @@ export default function CandidateDashboard() {
   const [externalSelectedJob, setExternalSelectedJob] = useState(null);
   const [titleQuery, setTitleQuery] = useState('');
   const [locationQuery, setLocationQuery] = useState('');
-  const [jobView, setJobView] = useState('recommended'); // 'recommended' | 'all'
+  const [jobView, setJobView] = useState('recommended');
+  const [jobSort, setJobSort] = useState('match');
+  const [jobFilters, setJobFilters] = useState(DEFAULT_JOB_FILTERS);
+  const activeFilterCount = countActiveFilters(jobFilters);
   const [isLoading, setIsLoading] = useState(true);
   const [savedError, setSavedError] = useState('');
   const [applications, setApplications] = useState([]);
@@ -428,7 +469,20 @@ export default function CandidateDashboard() {
   const [successToast, setSuccessToast] = useState('');
   const [selectedJobId, setSelectedJobId] = useState(null);
   const previousFocusRef = useRef(null);
-  const { jobs, isLoading: jobsLoading, error: jobsError, refetch: reloadJobs } = useJobs(user?.id, Boolean(user?.id));
+  const { jobs, setJobs, isLoading: jobsLoading, error: jobsError, refetch: reloadJobs } = useJobs(user?.id, Boolean(user?.id));
+  const [analysingJobId, setAnalysingJobId] = useState(null);
+  const analysisInFlightRef = useRef(new Set());
+  const [detailApplicationId, setDetailApplicationId] = useState(null);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const applicationId = params.get('application');
+    if (!applicationId) return;
+    setDetailApplicationId(applicationId);
+    params.delete('application');
+    const query = params.toString();
+    window.history.replaceState(window.history.state, '', window.location.pathname + (query ? `?${query}` : '') + window.location.hash);
+  }, []);
 
   useEffect(() => {
     if (window.location.hash !== '#edit-profile') return;
@@ -446,7 +500,6 @@ export default function CandidateDashboard() {
     }
   }, [isDarkMode]);
 
-  // Candidate application history (title, company, date applied, status).
   const loadApplications = async (userId) => {
     setApplicationsLoading(true);
     setApplicationsError('');
@@ -458,12 +511,19 @@ export default function CandidateDashboard() {
         .order('applied_at', { ascending: false });
       if (error) throw error;
 
-      // Company names live on the employers table (id = recruiter_id).
       const recruiterIds = [...new Set((data || []).map((a) => a.job_postings?.recruiter_id).filter(Boolean))];
       let companies = {};
       if (recruiterIds.length) {
         const { data: employers } = await supabase.from('employers').select('id, companyName').in('id', recruiterIds);
         companies = Object.fromEntries((employers || []).map((e) => [e.id, e.companyName]));
+      }
+
+      const jobIds = [...new Set((data || []).map((a) => a.job_id).filter(Boolean))];
+      let currentScores = {};
+      if (jobIds.length) {
+        const { data: analyses } = await supabase.from('job_match_analysis')
+          .select('job_id, score').eq('candidate_id', userId).in('job_id', jobIds);
+        currentScores = Object.fromEntries((analyses || []).map((row) => [row.job_id, row.score]));
       }
 
       setApplications((data || []).map((a) => ({
@@ -475,7 +535,7 @@ export default function CandidateDashboard() {
         company: companies[a.job_postings?.recruiter_id] || '—',
         appliedAt: a.applied_at,
         status: a.status || 'Applied',
-        matchScore: a.match_score,
+        matchScore: currentScores[a.job_id] ?? a.match_score,
       })));
     } catch (err) {
       console.error("Applications Error:", err);
@@ -533,8 +593,6 @@ export default function CandidateDashboard() {
             initials: initials
           });
 
-          // Make sure a candidate_profiles row with first/last name exists, so recruiters
-          // see the real name on applications instead of "Unknown".
           await createPublicProfile(response.data.id, response.data.email, 'job_seeker', metadata.full_name || metadata.name || '');
 
           const { data: candidateProfile, error: profileError } = await supabase
@@ -568,8 +626,6 @@ export default function CandidateDashboard() {
     loadUser();
   }, [navigate]);
 
-  // Fetch optional employer logo URLs without requiring a specific logo column.
-  // Employers without logos continue to display company initials.
   useEffect(() => {
     const recruiterIds = [...new Set([
       ...jobs.map((job) => job.recruiter_id),
@@ -629,10 +685,6 @@ export default function CandidateDashboard() {
     if (result.success) navigate("/login");
   };
 
-  // Only jobs returned with a usable recommendation score may enter Recommended.
-  // Crucially, exclude explicit qualification mismatches BEFORE listing them,
-  // rather than relying on a 0% badge. Unknown eligibility isn't a rejection;
-  // these jobs remain discoverable through All jobs.
   const recommendedJobs = useMemo(() => jobs.filter((job) =>
     job.qualification_mismatch !== true &&
     matchScoreOf(job) !== null &&
@@ -645,17 +697,42 @@ export default function CandidateDashboard() {
     const source = jobView === 'recommended' ? recommendedJobs : jobs;
     return source.filter((job) =>
       (!titleSearch || jobText(job).includes(titleSearch)) &&
-      (!locationSearch || [job.location, job.work_type].filter(Boolean).join(' ').toLowerCase().includes(locationSearch))
+      (!locationSearch || [job.location, job.work_type].filter(Boolean).join(' ').toLowerCase().includes(locationSearch)) &&
+      jobMatchesFilters(job, jobFilters)
     );
-  }, [jobs, recommendedJobs, jobView, titleQuery, locationQuery]);
+  }, [jobs, recommendedJobs, jobView, titleQuery, locationQuery, jobFilters]);
+  const sortedJobs = useMemo(
+    () => [...filteredJobs].sort(JOB_COMPARATORS[jobSort] || JOB_COMPARATORS.match),
+    [filteredJobs, jobSort],
+  );
   const visibleSavedJobs = savedJobs.filter((saved) => saved.job_postings
     && !saved.job_postings.is_archived
     && (saved.job_postings.hiring_status || 'open') === 'open');
 
-  // Job cards always open the modal. A saved job may be outside the search results;
-  // fetch its full details in that case rather than showing an empty modal.
   const selectedJob = jobs.find((job) => job.id === selectedJobId)
     || (externalSelectedJob?.id === selectedJobId ? externalSelectedJob : null);
+
+  useEffect(() => {
+    const job = selectedJob;
+    if (!job || job.matchAnalysis || job.matchAnalysisError || job.qualification_mismatch) return;
+    if (analysisInFlightRef.current.has(job.id)) return;
+    analysisInFlightRef.current.add(job.id);
+    setAnalysingJobId(job.id);
+    fetchMatchAnalyses([job.id]).then(({ analyses, error }) => {
+      const analysis = analyses[job.id];
+      const merge = (item) => {
+        if (item?.id !== job.id) return item;
+        return analysis
+          ? { ...item, matchAnalysis: analysis, match: analysis.score, matchAnalysisError: '' }
+          : { ...item, matchAnalysisError: error || 'No match analysis is available for this job.' };
+      };
+      setJobs((current) => current.map(merge));
+      setExternalSelectedJob((current) => (current ? merge(current) : current));
+    }).finally(() => {
+      analysisInFlightRef.current.delete(job.id);
+      setAnalysingJobId((current) => (current === job.id ? null : current));
+    });
+  }, [selectedJob, setJobs]);
 
   const selectJob = async (jobId) => {
     previousFocusRef.current = document.activeElement;
@@ -709,6 +786,18 @@ export default function CandidateDashboard() {
         logout={handleLogout}
         openApplications={() => { setApplicationsOpen(true); loadApplications(user.id); }}
         applicationsCount={applications.length}
+        onHome={() => {
+          setSelectedJobId(null);
+          setExternalSelectedJob(null);
+          setApplicationsOpen(false);
+          setDetailApplicationId(null);
+          setJobView('recommended');
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }}
+        onNotificationSelect={(notification) => {
+          if (notification?.application_id) setDetailApplicationId(notification.application_id);
+          else { setApplicationsOpen(true); loadApplications(user.id); }
+        }}
       />
       <main className="max-w-[1400px] mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-12">
         <div className="mb-8">
@@ -731,7 +820,8 @@ export default function CandidateDashboard() {
             <input type="text" value={locationQuery} onChange={(event) => setLocationQuery(event.target.value)} placeholder="City or region" className={`w-full bg-transparent border-none focus:ring-0 text-sm py-2 outline-none ${isDarkMode ? 'text-white placeholder-slate-500' : 'text-slate-900 placeholder-slate-400'}`} />
           </div>
           <div className="flex items-center gap-3 w-full md:w-auto px-2 md:px-0 mt-2 md:mt-0">
-            <button onClick={() => setFilterModalOpen(true)} className={`p-2.5 rounded-xl transition-colors border ${isDarkMode ? 'bg-[#1a2636] hover:bg-[#233348] text-slate-300 border-white/5' : 'bg-slate-100 hover:bg-slate-200 text-slate-600 border-slate-200'}`}>
+            <button type="button" onClick={() => setFilterModalOpen(true)} aria-label={activeFilterCount ? `Filters, ${activeFilterCount} active` : 'Filters'} className={`relative p-2.5 rounded-xl transition-colors border ${activeFilterCount ? 'border-[#ea6036] text-[#ea6036]' : ''} ${isDarkMode ? `bg-[#1a2636] hover:bg-[#233348] ${activeFilterCount ? '' : 'text-slate-300 border-white/5'}` : `bg-slate-100 hover:bg-slate-200 ${activeFilterCount ? '' : 'text-slate-600 border-slate-200'}`}`}>
+              {activeFilterCount > 0 && <span className="absolute -top-1.5 -right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-[#ea6036] px-1 text-[9px] font-bold text-white">{activeFilterCount}</span>}
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"></path></svg>
             </button>
             <button type="button" onClick={() => setJobView('all')} className="flex-1 md:flex-none px-8 py-2.5 bg-[#ea6036] hover:bg-[#d8552e] text-white text-sm font-bold uppercase tracking-wider rounded-xl transition-colors shadow-lg">
@@ -740,7 +830,6 @@ export default function CandidateDashboard() {
           </div>
         </div>
 
-        {/* Desktop: Recommended on the left, Saved jobs on the right. On mobile they stack. */}
         {savedError && <p role="alert" className="mb-3 text-xs text-red-500">{savedError}</p>}
         <div className="mb-12 grid grid-cols-1 items-start gap-6 lg:grid-cols-[minmax(0,1.65fr)_minmax(320px,1fr)] lg:gap-8">
           <section aria-label={jobView === 'recommended' ? 'Recommended job listings' : 'All job listings'} className="min-w-0">
@@ -753,7 +842,14 @@ export default function CandidateDashboard() {
                   {filteredJobs.length} {filteredJobs.length === 1 ? 'job' : 'jobs'}
                 </span>
               )}
-              <div className={`ml-auto inline-flex rounded-lg border p-0.5 ${isDarkMode ? 'border-white/10 bg-[#1a2636]' : 'border-slate-200 bg-slate-100'}`} role="group" aria-label="Job listing view">
+              <label className={`ml-auto flex items-center gap-1.5 text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                Sort by
+                <select value={jobSort} onChange={(event) => setJobSort(event.target.value)}
+                  className={`rounded-lg border px-2 py-1.5 text-xs font-semibold outline-none focus:ring-2 focus:ring-[#ea6036]/40 ${isDarkMode ? 'border-white/10 bg-[#1a2636] text-slate-200' : 'border-slate-200 bg-white text-slate-700'}`}>
+                  {JOB_SORTS.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
+                </select>
+              </label>
+              <div className={`inline-flex rounded-lg border p-0.5 ${isDarkMode ? 'border-white/10 bg-[#1a2636]' : 'border-slate-200 bg-slate-100'}`} role="group" aria-label="Job listing view">
                 {[
                   { key: 'recommended', label: 'Recommended' },
                   { key: 'all', label: 'All jobs' },
@@ -778,15 +874,17 @@ export default function CandidateDashboard() {
               </div>
             ) : filteredJobs.length === 0 ? (
               <p className={`rounded-2xl p-6 text-sm ${isDarkMode ? 'bg-[#121b27] text-slate-400' : 'bg-white text-slate-500'}`}>
-                {jobView === 'recommended'
+                {activeFilterCount > 0 ? (
+                  <>No jobs match your filters. <button type="button" onClick={() => setJobFilters(DEFAULT_JOB_FILTERS)} className="font-semibold text-[#ea6036] hover:underline">Clear filters</button></>
+                ) : jobView === 'recommended'
                   ? 'No recommended matches found. Update your resume/profile to improve matching, or switch to All jobs to browse every listing.'
                   : 'No jobs match your search right now.'}
               </p>
             ) : (
               <div className="space-y-3">
-                {filteredJobs.map((job) => (
+                {sortedJobs.map((job) => (
                   <JobListItem key={job.id} job={job} isSelected={job.id === selectedJobId}
-                    isApplied={applications.some((item) => item.jobId === job.id)}
+                    isApplied={applications.some((item) => item.jobId === job.id && item.status !== 'Withdrawn')}
                     isSaved={savedJobs.some((saved) => saved.job_posting_id === job.id)}
                     isSaving={savingJobIds.includes(job.id)}
                     logoUrl={companyLogos[job.recruiter_id] || null}
@@ -839,9 +937,12 @@ export default function CandidateDashboard() {
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 lg:gap-8">
           {[
-            { value: String(applications.filter((a) => a.status !== 'Rejected').length), label: "Active applications" },
+            { value: String(applications.filter((a) => !['Rejected', 'Withdrawn'].includes(a.status)).length), label: "Active applications" },
             { value: String(applications.filter((a) => a.status === 'Interview').length), label: "Interview requests" },
-            { value: applications.length ? `${Math.round(applications.reduce((sum, a) => sum + (a.matchScore || 0), 0) / applications.length)}%` : "—", label: "Average match score" }
+            (() => {
+              const scored = applications.filter((a) => a.status !== 'Withdrawn' && a.matchScore != null);
+              return { value: scored.length ? `${Math.round(scored.reduce((sum, a) => sum + Number(a.matchScore), 0) / scored.length)}%` : "—", label: "Average match score" };
+            })()
           ].map((stat, idx) => (
             <div key={idx} className={`p-6 rounded-2xl border ${isDarkMode ? 'bg-[#121b27] border-white/5' : 'bg-white border-slate-200 shadow-sm'}`}>
               <span className={`block text-4xl font-serif font-bold mb-1 ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{stat.value}</span>
@@ -860,6 +961,8 @@ export default function CandidateDashboard() {
           isSaving={savingJobIds.includes(selectedJob.id)}
           onToggleSave={toggleSavedJob} onClose={closeJobModal}
           onEditProfile={() => setProfileModalOpen(true)}
+          onViewApplication={(applicationId) => setDetailApplicationId(applicationId)}
+          isAnalysing={analysingJobId === selectedJob.id}
           onApplied={() => loadApplications(user.id)}
           onApplySuccess={() => {
             setSuccessToast(`Application submitted for ${selectedJob.title}.`);
@@ -873,10 +976,20 @@ export default function CandidateDashboard() {
           isLoading={applicationsLoading}
           error={applicationsError}
           onClose={() => setApplicationsOpen(false)}
+          onSelect={(application) => setDetailApplicationId(application.id)}
           isDarkMode={isDarkMode}
         />
       )}
-      {isFilterModalOpen && <FilterModal onClose={() => setFilterModalOpen(false)} isDarkMode={isDarkMode} />}
+      {detailApplicationId && (
+        <ApplicationDetailModal
+          key={detailApplicationId}
+          applicationId={detailApplicationId}
+          isDarkMode={isDarkMode}
+          onChanged={() => loadApplications(user.id)}
+          onClose={() => setDetailApplicationId(null)}
+        />
+      )}
+      {isFilterModalOpen && <FilterModal onClose={() => setFilterModalOpen(false)} isDarkMode={isDarkMode} value={jobFilters} onApply={setJobFilters} />}
       {isProfileModalOpen && (
         <ProfileModal
           user={user}

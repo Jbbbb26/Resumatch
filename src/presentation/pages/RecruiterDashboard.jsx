@@ -15,15 +15,17 @@ import { FileUploadField } from '../components/FileUploadField';
 import { useJobAttachments } from '../../hooks/useJobAttachments';
 import { RichJobEditor } from '../components/RichJobEditor';
 import { jobTextOnly } from '../../data/services/jobText';
+import { MatchAnalysis } from '../components/MatchAnalysis';
+import { EXPERIENCE_LEVELS, JOB_CATEGORIES } from '../../data/jobOptions';
 
 const emptyJobForm = {
   title: '', location: '', work_type: 'Remote', employment_type: 'Full-time', description: '', requirements: '',
+  experience_level: '', job_category: '', salary_min: '', salary_max: '',
 };
 
-// Character limits for long text fields (adjust to taste)
 const JOB_TEXT_LIMITS = {
-  description: 5000,   // roughly 700-900 words, typical for a full job post
-  requirements: 3000,  // roughly 400-500 words
+  description: 5000,
+  requirements: 3000,
 };
 
 const formatPostedDate = (createdAt) => `Posted ${new Date(createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`;
@@ -72,7 +74,6 @@ function CloseButton({ onClick, isDarkMode }) {
   );
 }
 
-/* ------------------------------------------------------------------ Job form (create + edit) */
 function JobFormModal({ mode, form, setForm, jobId, recruiterId, onClose, onSubmit, isSubmitting, message, isDarkMode }) {
   const isEdit = mode === 'edit';
   const attachmentState = useJobAttachments(jobId, recruiterId, isEdit || Boolean(jobId));
@@ -133,12 +134,35 @@ function JobFormModal({ mode, form, setForm, jobId, recruiterId, onClose, onSubm
                 <option>Remote</option><option>Hybrid</option><option>On-site</option>
               </select>
             </label>
-            <label className="flex flex-col gap-1.5 md:col-span-2">
+            <label className="flex flex-col gap-1.5">
               <span className={`text-xs font-bold uppercase tracking-wider ${labelColor}`}>Employment type</span>
               <select value={form.employment_type} onChange={(e) => updateField('employment_type', e.target.value)} className={`rounded-xl px-4 py-3 text-sm outline-none border transition-colors ${inputBg}`}>
                 <option>Full-time</option><option>Part-time</option><option>Contract</option>
               </select>
             </label>
+            <label className="flex flex-col gap-1.5">
+              <span className={`text-xs font-bold uppercase tracking-wider ${labelColor}`}>Experience level <span className="font-normal normal-case tracking-normal">(optional)</span></span>
+              <select value={form.experience_level || ''} onChange={(e) => updateField('experience_level', e.target.value)} className={`rounded-xl px-4 py-3 text-sm outline-none border transition-colors ${inputBg}`}>
+                <option value="">Not specified</option>
+                {EXPERIENCE_LEVELS.map((level) => <option key={level}>{level}</option>)}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1.5 md:col-span-2">
+              <span className={`text-xs font-bold uppercase tracking-wider ${labelColor}`}>Job category <span className="font-normal normal-case tracking-normal">(optional)</span></span>
+              <select value={form.job_category || ''} onChange={(e) => updateField('job_category', e.target.value)} className={`rounded-xl px-4 py-3 text-sm outline-none border transition-colors ${inputBg}`}>
+                <option value="">Not specified</option>
+                {JOB_CATEGORIES.map((category) => <option key={category}>{category}</option>)}
+              </select>
+            </label>
+            <fieldset className="flex flex-col gap-1.5 md:col-span-2">
+              <legend className={`mb-1.5 text-xs font-bold uppercase tracking-wider ${labelColor}`}>Monthly salary (₱) <span className="font-normal normal-case tracking-normal">(optional)</span></legend>
+              <div className="flex items-center gap-3">
+                <input type="number" inputMode="numeric" min="0" step="1" aria-label="Minimum monthly salary" value={form.salary_min ?? ''} onChange={(e) => updateField('salary_min', e.target.value)} placeholder="Min, e.g. 25000" className={`w-full rounded-xl px-4 py-3 text-sm outline-none border transition-colors ${inputBg}`} />
+                <span className={labelColor}>–</span>
+                <input type="number" inputMode="numeric" min="0" step="1" aria-label="Maximum monthly salary" value={form.salary_max ?? ''} onChange={(e) => updateField('salary_max', e.target.value)} placeholder="Max, e.g. 35000" className={`w-full rounded-xl px-4 py-3 text-sm outline-none border transition-colors ${inputBg}`} />
+              </div>
+              <span className={`text-xs ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Leave blank to hide the salary. Fill in one or both.</span>
+            </fieldset>
             <RichJobEditor
               id="job-description"
               label="Description"
@@ -188,34 +212,14 @@ function JobFormModal({ mode, form, setForm, jobId, recruiterId, onClose, onSubm
   );
 }
 
-/* ------------------------------------------------------------------ Review applications modal */
-const APPLICATION_STATUSES = ['Applied', 'Screening', 'Interview', 'Offer', 'Hired', 'Rejected'];
-const statusLabel = (status) => (status === 'Rejected' ? 'Not selected' : status);
-
-function ReviewApplicationsModal({ job, onClose, onStatusChange, isDarkMode }) {
+function ReviewApplicationsModal({ job, onClose, isDarkMode }) {
   const [applications, setApplications] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
   const [previewCandidate, setPreviewCandidate] = useState(null);
-  const [savingId, setSavingId] = useState(null);
   const [expandedApplicationId, setExpandedApplicationId] = useState(null);
-
-  // Recruiter sets the outcome. "Rejected" (shown as "Not selected") lets the candidate re-apply after the cooldown.
-  const updateStatus = async (app, status) => {
-    setSavingId(app.id);
-    setError('');
-    const { error: updateError } = await supabase
-      .from('applications')
-      .update({ status, stage: status.toLowerCase() })
-      .eq('id', app.id);
-    if (updateError) {
-      setError(updateError.message);
-    } else {
-      setApplications((current) => current.map((a) => (a.id === app.id ? { ...a, status } : a)));
-      onStatusChange?.(app.id, status);
-    }
-    setSavingId(null);
-  };
+  const [analysisByCandidate, setAnalysisByCandidate] = useState({});
+  const [withdrawnCount, setWithdrawnCount] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -229,8 +233,31 @@ function ReviewApplicationsModal({ job, onClose, onStatusChange, isDarkMode }) {
         .order('match_score', { ascending: false });
       if (cancelled) return;
       if (queryError) setError(queryError.message);
-      else setApplications(data || []);
+      else {
+        setApplications((data || []).filter((app) => app.status !== 'Withdrawn'));
+        setWithdrawnCount((data || []).filter((app) => app.status === 'Withdrawn').length);
+      }
       setIsLoading(false);
+
+      const candidateIds = [...new Set((data || []).map((app) => app.candidate_id).filter(Boolean))];
+      if (queryError || !candidateIds.length) return;
+      const { data: analyses, error: analysisError } = await supabase
+        .from('job_match_analysis')
+        .select('candidate_id, score, coverage, overall_similarity, requirements, computed_at')
+        .eq('job_id', job.id)
+        .in('candidate_id', candidateIds);
+      if (cancelled) return;
+      if (analysisError) {
+        console.error('Match analysis load error:', analysisError.message);
+        return;
+      }
+      setAnalysisByCandidate(Object.fromEntries((analyses || []).map((row) => [row.candidate_id, {
+        score: row.score,
+        coverage: row.coverage,
+        overallSimilarity: row.overall_similarity,
+        requirements: row.requirements || [],
+        computedAt: row.computed_at,
+      }])));
     };
     load();
     return () => { cancelled = true; };
@@ -248,7 +275,7 @@ function ReviewApplicationsModal({ job, onClose, onStatusChange, isDarkMode }) {
               <div className={`mb-1 text-xs font-semibold uppercase tracking-wider ${isDarkMode ? 'text-[#4fa784]' : 'text-emerald-600'}`}>Applications</div>
               <h2 className={`text-2xl font-serif font-bold ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{job.title}</h2>
               <p className={`mt-1 text-sm ${muted}`}>
-                {isLoading ? 'Loading applicants...' : `${applications.length} ${applications.length === 1 ? 'candidate' : 'candidates'}, ranked by match score`}
+                {isLoading ? 'Loading applicants...' : `${applications.length} ${applications.length === 1 ? 'candidate' : 'candidates'}, ranked by match score${withdrawnCount ? ` · ${withdrawnCount} withdrew` : ''}`}
               </p>
             </div>
             <CloseButton onClick={onClose} isDarkMode={isDarkMode} />
@@ -267,6 +294,8 @@ function ReviewApplicationsModal({ job, onClose, onStatusChange, isDarkMode }) {
                 {applications.map((app) => {
                   const person = candidateDisplay(app);
                   const score = app.match_score ? Math.round(app.match_score) : 0;
+                  const analysis = analysisByCandidate[app.candidate_id] || null;
+                  const canExpand = Boolean(app.applicant_details || analysis);
                   return (
                     <li key={app.id} className={`flex flex-wrap items-center justify-between gap-4 rounded-xl border p-4 ${isDarkMode ? 'border-white/5 bg-[#121b27]' : 'border-slate-200 bg-slate-50'}`}>
                       <div className="flex min-w-0 items-center gap-3">
@@ -283,22 +312,13 @@ function ReviewApplicationsModal({ job, onClose, onStatusChange, isDarkMode }) {
                           </div>
                           <strong className={`text-sm ${isDarkMode ? 'text-[#4fa784]' : 'text-emerald-600'}`}>{score}%</strong>
                         </div>
-                        <select
-                          aria-label="Application status"
-                          value={app.status || 'Applied'}
-                          disabled={savingId === app.id}
-                          onChange={(e) => updateStatus(app, e.target.value)}
-                          className={`rounded-lg border px-2.5 py-1.5 text-xs font-bold outline-none disabled:opacity-60 ${isDarkMode ? 'border-white/10 bg-[#0a121c] text-slate-200' : 'border-slate-300 bg-white text-slate-700'}`}
-                        >
-                          {APPLICATION_STATUSES.map((s) => <option key={s} value={s}>{statusLabel(s)}</option>)}
-                        </select>
                         <button
                           onClick={() => setPreviewCandidate({ id: app.candidate_id, ...person })}
                           className={`rounded-lg border px-3 py-1.5 text-xs font-bold transition-colors ${isDarkMode ? 'border-white/10 text-slate-300 hover:bg-[#1a2636]' : 'border-slate-300 text-slate-600 hover:bg-white'}`}
                         >
                           View profile
                         </button>
-                        {app.applicant_details && (
+                        {canExpand && (
                           <button
                             type="button"
                             aria-expanded={expandedApplicationId === app.id}
@@ -309,6 +329,29 @@ function ReviewApplicationsModal({ job, onClose, onStatusChange, isDarkMode }) {
                           </button>
                         )}
                       </div>
+                      {expandedApplicationId === app.id && (
+                        <section className={`basis-full rounded-xl border p-4 ${isDarkMode ? 'border-white/10 bg-[#0a121c]' : 'border-slate-200 bg-white'}`} aria-label={`Match score breakdown for ${person.name}`}>
+                          {analysis ? (
+                            <>
+                              <MatchAnalysis
+                                job={{ id: `app-${app.id}`, matchAnalysis: analysis }}
+                                audience="recruiter"
+                                title={`Why ${score}%?`}
+                                isDarkMode={isDarkMode}
+                              />
+                              {analysis.score !== score && (
+                                <p className={`mt-3 text-xs ${muted}`}>
+                                  The saved score ({score}%) was calculated when they applied. Based on their current resume and this job's current text, it would be {analysis.score}%.
+                                </p>
+                              )}
+                            </>
+                          ) : (
+                            <p className={`text-xs ${muted}`}>
+                              <strong>Why {score}%?</strong> No requirement-by-requirement breakdown is stored for this application. It was probably submitted before match analysis was added, so the score came from the older keyword-based formula.
+                            </p>
+                          )}
+                        </section>
+                      )}
                       {expandedApplicationId === app.id && app.applicant_details && (
                         <section className={`basis-full rounded-xl border p-4 text-xs ${isDarkMode ? 'border-white/10 bg-[#0a121c] text-slate-300' : 'border-slate-200 bg-white text-slate-700'}`} aria-label={`Application details for ${person.name}`}>
                           <div className="grid gap-4 sm:grid-cols-2">
@@ -383,7 +426,6 @@ function ReviewApplicationsModal({ job, onClose, onStatusChange, isDarkMode }) {
   );
 }
 
-/* ------------------------------------------------------------------ Shared: save a job (create or edit) */
 const saveJob = async ({ mode, jobId, form }) => {
   if (!form.title.trim()) return { success: false, message: 'Job title is required.' };
   if (jobTextOnly(form.description).length > JOB_TEXT_LIMITS.description) {
@@ -391,6 +433,14 @@ const saveJob = async ({ mode, jobId, form }) => {
   }
   if (jobTextOnly(form.requirements).length > JOB_TEXT_LIMITS.requirements) {
     return { success: false, message: `Requirements must be ${JOB_TEXT_LIMITS.requirements.toLocaleString()} characters or fewer.` };
+  }
+  const salaryMin = form.salary_min === '' || form.salary_min == null ? null : Number(form.salary_min);
+  const salaryMax = form.salary_max === '' || form.salary_max == null ? null : Number(form.salary_max);
+  if ([salaryMin, salaryMax].some((value) => value !== null && (!Number.isInteger(value) || value < 0))) {
+    return { success: false, message: 'Salary must be a whole number of pesos per month.' };
+  }
+  if (salaryMin !== null && salaryMax !== null && salaryMax < salaryMin) {
+    return { success: false, message: 'Maximum salary must be at least the minimum salary.' };
   }
   return apiFetch(mode === 'edit' ? `/api/jobs/${jobId}` : '/api/post-job', {
     method: mode === 'edit' ? 'PUT' : 'POST',
@@ -405,7 +455,6 @@ const topMatchFor = (applicants, jobId) => {
   return `${Math.round(Math.max(...jobApps.map((a) => a.match_score || 0)))}%`;
 };
 
-/* ------------------------------------------------------------------ Dashboard: read-only listings preview */
 function JobListingsPreview({ jobs, applicants, onManage, isDarkMode }) {
   const preview = jobs.slice(0, 5);
   return (
@@ -452,7 +501,6 @@ function JobListingsPreview({ jobs, applicants, onManage, isDarkMode }) {
   );
 }
 
-/* ------------------------------------------------------------------ Dashboard home */
 function Home({ userId, isDarkMode, jobs, setJobs, applicants, onNavigate }) {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [form, setForm] = useState(emptyJobForm);
@@ -549,7 +597,6 @@ function Home({ userId, isDarkMode, jobs, setJobs, applicants, onNavigate }) {
   );
 }
 
-/* ------------------------------------------------------------------ Job Listings page: review, edit, delete */
 function JobsPage({ user, isDarkMode, setJobs, applicants, setApplicants }) {
   const [editingJob, setEditingJob] = useState(null);
   const [form, setForm] = useState(emptyJobForm);
@@ -576,6 +623,8 @@ function JobsPage({ user, isDarkMode, setJobs, applicants, setApplicants }) {
     setForm({
       title: job.title || '', location: job.location || '', work_type: job.work_type || 'Remote',
       employment_type: job.employment_type || 'Full-time', description: job.description || '', requirements: job.requirements || '',
+      experience_level: job.experience_level || '', job_category: job.job_category || '',
+      salary_min: job.salary_min ?? '', salary_max: job.salary_max ?? '',
     });
     setMessage(null);
     setEditingJob(job);
@@ -619,10 +668,6 @@ function JobsPage({ user, isDarkMode, setJobs, applicants, setApplicants }) {
 
   const handleRestore = async (job) => {
     await restoreJob(job.id);
-  };
-
-  const handleStatusChange = (applicationId, status) => {
-    setApplicants((current) => current.map((a) => (a.id === applicationId ? { ...a, status } : a)));
   };
 
   return (
@@ -704,7 +749,7 @@ function JobsPage({ user, isDarkMode, setJobs, applicants, setApplicants }) {
         />
       )}
       {reviewJob && (
-        <ReviewApplicationsModal job={reviewJob} onClose={() => setReviewJob(null)} onStatusChange={handleStatusChange} isDarkMode={isDarkMode} />
+        <ReviewApplicationsModal job={reviewJob} onClose={() => setReviewJob(null)} isDarkMode={isDarkMode} />
       )}
     </section>
   );
@@ -763,7 +808,7 @@ export default function RecruiterDashboard() {
       .order('match_score', { ascending: false });
 
     if (appsError) console.error('Supabase Query Error:', appsError.message);
-    else if (fetchedApps) setApplicants(fetchedApps);
+    else if (fetchedApps) setApplicants(fetchedApps.filter((app) => app.status !== 'Withdrawn'));
 
     setIsLoading(false);
   };
@@ -799,6 +844,8 @@ export default function RecruiterDashboard() {
         toggleTheme={() => setIsDarkMode(!isDarkMode)}
         openProfile={() => setIsProfileModalOpen(true)}
         logout={handleLogout}
+        onNotificationSelect={() => setView('pipeline')}
+        onHome={() => { setView('home'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
       />
       <div className="flex max-w-[1400px] mx-auto">
         <Sidebar active={view} onNavigate={setView} isDarkMode={isDarkMode} />

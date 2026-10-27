@@ -1,5 +1,3 @@
-// Builds a display name for a candidate from the profile joined onto an application row.
-// Falls back to the email's local part (never "Unknown") when the profile has no name yet.
 export const candidateDisplay = (application) => {
   const raw = application?.candidate_profiles;
   const profile = (Array.isArray(raw) ? raw[0] : raw) || {};

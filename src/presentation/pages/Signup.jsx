@@ -1,11 +1,12 @@
 import { useState , useEffect} from 'react';
-import { Link, useNavigate , useLocation} from 'react-router-dom'; 
+import { Link, useNavigate , useLocation} from 'react-router-dom';
 import { registerUser, loginWithGoogle } from '../../data/services/authService';
+import { takeReturnPath } from '../../data/services/returnPath';
 import AppIcon from '../../../assets/Icon.png';
 
 export default function Signup() {
-  const navigate = useNavigate(); 
-const location = useLocation(); 
+  const navigate = useNavigate();
+const location = useLocation();
   const [activeRole, setActiveRole] = useState(null);
   const [showPassword, setShowPassword] = useState(false);
   const [email, setEmail] = useState('');
@@ -26,12 +27,12 @@ useEffect(() => {
 
   const handleGoogleAuth = async () => {
     setMessage('');
-    
+
     sessionStorage.setItem('authIntent', 'signup');
     sessionStorage.setItem('intendedRole', activeRole);
-    
+
     const response = await loginWithGoogle('/login');
-    
+
     if (!response.success) {
       setMessage(`Google Auth Error: ${response.message}`);
     }
@@ -42,15 +43,13 @@ useEffect(() => {
     setLoading(true);
     setMessage('');
 
-    // BUG_005 Fix: Reject inputs with angled brackets to prevent XSS/script tags
     const invalidCharRegex = /[<>]/;
     if (invalidCharRegex.test(fullName)) {
       setMessage('Error: Full Name contains invalid characters (e.g., < or >).');
       setLoading(false);
       return;
     }
-    
-    // Applying the same safety check to Company Name
+
     if (activeRole === 'recruiter' && invalidCharRegex.test(companyName)) {
       setMessage('Error: Company Name contains invalid characters.');
       setLoading(false);
@@ -58,12 +57,10 @@ useEffect(() => {
     }
 
     const response = await registerUser(email, password, activeRole, fullName, companyName);
-          
+
     if (!response.success) {
-      // Safely fallback to an empty string if message is undefined
       const errorMsg = response.message || "";
-      
-      // Check both your backend's exact wording and the default phrasing
+
       if (errorMsg.toLowerCase().includes('already registered') || errorMsg.toLowerCase().includes('already exists')) {
         setMessage('This email is already registered. Please sign in instead.');
       } else {
@@ -71,32 +68,19 @@ useEffect(() => {
       }
       setLoading(false);
     } else {
-      if (activeRole === 'recruiter') {
-        navigate('/recruiter-dashboard');
-      } else {
-        navigate('/candidate-dashboard');
-      }
+      navigate(takeReturnPath(activeRole));
     }
   };
-  
+
   return (
     <div className="min-h-screen flex flex-col bg-[#F8F9FA] font-sans">
-      
+
       <header className="flex items-center justify-between px-8 py-4 bg-white border-b border-slate-100">
         <div className="flex items-center gap-2">
           <img src={AppIcon} alt="ResuMatch Logo" className="w-10 h-10 object-cover rounded" />
           <span className="text-xl font-bold font-serif text-slate-900">ResuMatch</span>
         </div>
         <div className="flex items-center gap-6 text-sm font-medium text-slate-600">
-          <a href="#" className="flex items-center gap-1 hover:text-indigo-600 transition-colors">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-            Support & Guides
-          </a>
-          <div className="flex items-center gap-1 cursor-pointer hover:text-indigo-600 transition-colors">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" /></svg>
-            EN 
-            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" /></svg>
-          </div>
           <Link to="/login" className="text-indigo-600 font-semibold hover:text-indigo-700">
             Sign In
           </Link>
@@ -105,21 +89,21 @@ useEffect(() => {
 
       <main className="flex-grow flex items-center justify-center p-6">
         <div className="bg-white max-w-md w-full rounded-2xl shadow-sm border border-slate-200 p-8 space-y-8">
-          
+
           <div className="space-y-1">
             <h1 className="text-2xl font-bold font-serif text-slate-900">
               {activeRole ? 'Create your account' : 'How will you use ResuMatch?'}
             </h1>
             <p className="text-sm text-slate-500">
-              {activeRole 
-                ? 'Get started with your deterministic ResuMatch workspace.' 
+              {activeRole
+                ? 'Get started with your deterministic ResuMatch workspace.'
                 : 'Select your primary goal to customize your onboarding experience.'}
             </p>
           </div>
 
           {!activeRole ? (
             <div className="space-y-4">
-              <button 
+              <button
                 onClick={() => setActiveRole('job_seeker')}
                 className="w-full flex items-center gap-4 p-4 border border-slate-200 rounded-xl hover:border-indigo-600 hover:bg-indigo-50 transition-all text-left"
               >
@@ -132,7 +116,7 @@ useEffect(() => {
                 </div>
               </button>
 
-              <button 
+              <button
                 onClick={() => setActiveRole('recruiter')}
                 className="w-full flex items-center gap-4 p-4 border border-slate-200 rounded-xl hover:border-indigo-600 hover:bg-indigo-50 transition-all text-left"
               >
@@ -146,10 +130,9 @@ useEffect(() => {
               </button>
             </div>
           ) : (
-            /* STEP 2: The Form */
             <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
-              
-              <button 
+
+              <button
                 onClick={() => setActiveRole(null)}
                 className="flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-indigo-600 mb-6 transition-colors"
               >
@@ -161,7 +144,7 @@ useEffect(() => {
                 <img src="https://www.svgrepo.com/show/475656/google-color.svg" alt="Google" className="w-5 h-5" />
                 Continue with Google
               </button>
-              
+
               <div className="relative flex items-center py-4">
                 <div className="flex-grow border-t border-slate-200"></div>
                 <span className="flex-shrink-0 px-4 text-xs font-semibold text-slate-400 tracking-wider uppercase">or sign up with email</span>
@@ -169,16 +152,16 @@ useEffect(() => {
               </div>
               {message && (
                 <div className="mb-4 bg-red-50 text-red-600 p-3 rounded-lg text-sm border border-red-100">
-                  {message.toLowerCase().includes("already registered") 
-                    ? "This email is already registered. Please sign in instead." 
+                  {message.toLowerCase().includes("already registered")
+                    ? "This email is already registered. Please sign in instead."
                     : message}
                 </div>
               )}
           <form onSubmit={handleSignup} className="space-y-5">
             <div className="space-y-1.5">
               <label className="text-sm font-semibold text-slate-800">Full Name</label>
-              <input 
-                type="text" 
+              <input
+                type="text"
                 placeholder="e.g. Alex Morgan"
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
@@ -191,8 +174,8 @@ useEffect(() => {
               <label className="text-sm font-semibold text-slate-800">
                 {activeRole === 'recruiter' ? 'Work Email Address' : 'Email address'}
               </label>
-              <input 
-                type="email" 
+              <input
+                type="email"
                 placeholder="name@example.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -204,8 +187,8 @@ useEffect(() => {
             {activeRole === 'recruiter' && (
               <div className="space-y-1.5">
                 <label className="text-sm font-semibold text-slate-800">Company Name</label>
-                <input 
-                  type="text" 
+                <input
+                  type="text"
                   placeholder="e.g. Graham Bars Corp."
                   value={companyName}
                   onChange={(e) => setCompanyName(e.target.value)}
@@ -218,8 +201,8 @@ useEffect(() => {
             <div className="space-y-2">
               <label className="text-sm font-semibold text-slate-800">Password</label>
               <div className="relative">
-                <input 
-                  type={showPassword ? "text" : "password"} 
+                <input
+                  type={showPassword ? "text" : "password"}
                   placeholder="Create a password (min. 8 characters)"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
@@ -227,8 +210,8 @@ useEffect(() => {
                   className="w-full border border-slate-200 rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 placeholder:text-slate-400 pr-10"
                 />
 
-                <button 
-                  type="button" 
+                <button
+                  type="button"
                   onClick={() => setShowPassword(!showPassword)}
                   className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
                 >
@@ -239,7 +222,7 @@ useEffect(() => {
                   )}
                 </button>
               </div>
-              
+
               <div className={`flex items-center gap-1.5 text-xs font-medium transition-colors ${isPasswordValid ? 'text-emerald-600' : 'text-slate-400'}`}>
                 {isPasswordValid ? (
                   <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" /></svg>
@@ -253,16 +236,16 @@ useEffect(() => {
             <div className="flex items-start gap-3 pt-2">
               <input type="checkbox" required className="mt-1 w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
               <p className="text-sm text-slate-600">
-                I agree to ResuMatch's <a href="#" className="text-indigo-600 font-medium hover:underline">Terms of Service</a> and acknowledge the <a href="#" className="text-indigo-600 font-medium hover:underline">Privacy Policy</a>.
+                I agree to ResuMatch's <Link to="/terms" target="_blank" rel="noopener noreferrer" className="text-indigo-600 font-medium hover:underline">Terms of Service</Link> and acknowledge the <Link to="/privacy" target="_blank" rel="noopener noreferrer" className="text-indigo-600 font-medium hover:underline">Privacy Policy</Link>.
               </p>
             </div>
 
-            <button 
-              type="submit" 
+            <button
+              type="submit"
               disabled={loading || (password.length > 0 && !isPasswordValid)}
                             className="w-full bg-[#4F46E5] hover:bg-indigo-700 disabled:bg-indigo-400 text-white rounded-lg py-3.5 text-sm font-semibold transition-colors shadow-sm mt-4 flex items-center justify-center gap-2"
             >
-              {loading ? 'Creating account...' : 'Create account'} 
+              {loading ? 'Creating account...' : 'Create account'}
               {!loading && <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>}
             </button>
           </form>
@@ -278,12 +261,10 @@ useEffect(() => {
       </main>
 
       <footer className="flex flex-col sm:flex-row items-center justify-between px-8 py-6 text-xs font-medium text-slate-500 bg-[#F8F9FA]">
-        <div>© 2025 ResuMatch Inc. All rights reserved.</div>
+        <div>© {new Date().getFullYear()} ResuMatch. All rights reserved.</div>
         <div className="flex gap-6 mt-4 sm:mt-0">
-          <a href="#" className="hover:text-slate-800 transition-colors">Privacy Policy</a>
-          <a href="#" className="hover:text-slate-800 transition-colors">Terms of Service</a>
-          <a href="#" className="hover:text-slate-800 transition-colors">Cookie Preferences</a>
-          <a href="#" className="hover:text-slate-800 transition-colors">Security Center</a>
+          <Link to="/privacy" className="hover:text-slate-800 transition-colors">Privacy Policy</Link>
+          <Link to="/terms" className="hover:text-slate-800 transition-colors">Terms of Service</Link>
         </div>
       </footer>
     </div>

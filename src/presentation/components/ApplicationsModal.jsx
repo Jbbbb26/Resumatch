@@ -3,11 +3,11 @@ import React from 'react';
 const statusStyle = (status, isDarkMode) => {
   if (status === 'Interview' || status === 'Hired') return isDarkMode ? 'bg-[#4fa784]/15 text-[#4fa784]' : 'bg-emerald-100 text-emerald-700';
   if (status === 'Rejected') return isDarkMode ? 'bg-red-900/30 text-red-400' : 'bg-red-50 text-red-600';
+  if (status === 'Withdrawn') return isDarkMode ? 'bg-white/5 text-slate-500 line-through' : 'bg-slate-100 text-slate-400 line-through';
   return isDarkMode ? 'bg-white/10 text-slate-300' : 'bg-slate-100 text-slate-600';
 };
 
-// Candidate's application history: Job Title, Company, Date Applied, Status.
-export const ApplicationsModal = ({ applications, isLoading, error, onClose, isDarkMode }) => {
+export const ApplicationsModal = ({ applications, isLoading, error, onClose, isDarkMode, onSelect }) => {
   const muted = isDarkMode ? 'text-slate-400' : 'text-slate-500';
 
   return (
@@ -38,7 +38,7 @@ export const ApplicationsModal = ({ applications, isLoading, error, onClose, isD
             <table className="w-full min-w-[560px] text-left">
               <thead>
                 <tr>
-                  {['Job title', 'Company', 'Date applied', 'Status'].map((h) => (
+                  {['Job title', 'Company', 'Date applied', 'Status', ...(onSelect ? [''] : [])].map((h) => (
                     <th key={h} className={`px-3 pb-3 text-[11px] font-bold uppercase tracking-wider ${muted}`}>{h}</th>
                   ))}
                 </tr>
@@ -55,6 +55,11 @@ export const ApplicationsModal = ({ applications, isLoading, error, onClose, isD
                     <td className="px-3 py-3.5">
                       <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${statusStyle(app.status, isDarkMode)}`}>{app.status === 'Rejected' ? 'Not selected' : app.status}</span>
                     </td>
+                    {onSelect && (
+                      <td className="px-3 py-3.5 text-right">
+                        <button type="button" onClick={() => onSelect(app)} className="text-xs font-bold text-[#ea6036] hover:underline">Details</button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>

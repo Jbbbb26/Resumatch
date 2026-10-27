@@ -1,10 +1,3 @@
-/**
- * @typedef {'applied'|'screening'|'interview'|'offer'|'hired'|'rejected'} PipelineStage
- * @typedef {{ id: number|string, application_id: string, from_stage: PipelineStage|null, to_stage: PipelineStage, changed_by: string|null, changed_at: string, note: string|null }} StageHistory
- * @typedef {{ id: string, stage: PipelineStage, stage_updated_at: string, rejection_reason: string|null, notes: string|null, status: string, match_score: number|null, applied_at: string, candidate_id: string, job_id: string, job_postings: Object, candidate_profiles: Object }} PipelineApplication
- */
-
-/** @type {{ id: PipelineStage, label: string, color: string }[]} */
 export const PIPELINE_STAGES = [
   { id: 'applied', label: 'Applied', color: 'blue' },
   { id: 'screening', label: 'Screening', color: 'orange' },

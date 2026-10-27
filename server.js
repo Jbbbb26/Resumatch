@@ -3,14 +3,18 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { createClient } from '@supabase/supabase-js';
 import { GoogleGenAI } from '@google/genai';
+import { analyzeJobsForCandidate } from './matchAnalysis.js';
+import { EXPERIENCE_LEVELS, JOB_CATEGORIES, SALARY_MAX_ALLOWED } from './src/data/jobOptions.js';
+import dns from 'node:dns';
+import { createLoginHandler } from './loginLimiter.js';
+import { createParseResumeHandler } from './resumeParser.js';
+
+dns.setDefaultResultOrder('ipv4first');
 
 dotenv.config();
 
 const app = express();
-// CORS: only the frontend origins listed in CORS_ORIGINS may call the API.
-// Comma-separated; an entry starting with "*." matches any subdomain, e.g.
-// CORS_ORIGINS=https://resumatch.vercel.app,*.vercel.app,http://localhost:5173
-// If CORS_ORIGINS is empty every origin is allowed (convenient for local dev only).
+app.set('trust proxy', Number.isNaN(Number(process.env.TRUST_PROXY)) ? process.env.TRUST_PROXY : Number(process.env.TRUST_PROXY ?? 1));
 const allowedOrigins = (process.env.CORS_ORIGINS || '').split(',').map((o) => o.trim().replace(/\/$/, '')).filter(Boolean);
 const isAllowedOrigin = (origin) => allowedOrigins.some((allowed) =>
   allowed.startsWith('*.') ? new URL(origin).hostname.endsWith(allowed.slice(1)) : origin === allowed);
@@ -37,8 +41,6 @@ const supabase = createClient(
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-// Verifies the Supabase access token sent by the frontend (Authorization: Bearer <token>)
-// and attaches the signed-in user to req.user.
 const requireUser = async (req, res, next) => {
   const token = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
   if (!token) return res.status(401).json({ success: false, message: 'Please sign in again.' });
@@ -60,12 +62,35 @@ const requireRecruiter = (req, res, next) => {
 const JOB_FIELDS = ['title', 'location', 'work_type', 'employment_type', 'description', 'requirements'];
 const HIRING_STATUSES = ['open', 'closed'];
 
-const pickJobFields = (body) => {
+const CHOICE_FIELDS = { experience_level: EXPERIENCE_LEVELS, job_category: JOB_CATEGORIES };
+const SALARY_FIELDS = ['salary_min', 'salary_max'];
+
+const pickJobFields = (body = {}) => {
   const job = {};
   for (const field of JOB_FIELDS) {
     if (typeof body[field] === 'string') job[field] = body[field].trim();
   }
-  return job;
+  for (const [field, allowed] of Object.entries(CHOICE_FIELDS)) {
+    if (!(field in body)) continue;
+    const value = typeof body[field] === 'string' ? body[field].trim() : body[field];
+    if (value === '' || value === null) job[field] = null;
+    else if (allowed.includes(value)) job[field] = value;
+    else return { job, error: `Invalid ${field.replace('_', ' ')}.` };
+  }
+  for (const field of SALARY_FIELDS) {
+    if (!(field in body)) continue;
+    const raw = body[field];
+    if (raw === '' || raw === null) { job[field] = null; continue; }
+    const value = Number(String(raw).replace(/[,\s₱]/g, ''));
+    if (!Number.isInteger(value) || value < 0 || value > SALARY_MAX_ALLOWED) {
+      return { job, error: 'Salary must be a whole number of pesos per month.' };
+    }
+    job[field] = value;
+  }
+  if (job.salary_min != null && job.salary_max != null && job.salary_max < job.salary_min) {
+    return { job, error: 'Maximum salary must be at least the minimum salary.' };
+  }
+  return { job, error: null };
 };
 
 const embedJob = async ({ title, work_type, employment_type, description, requirements }) => {
@@ -76,26 +101,21 @@ const embedJob = async ({ title, work_type, employment_type, description, requir
   });
   return embeddingResult.embeddings[0].values;
 };
-// Health check (Railway uses this to know the deploy is up).
 app.get('/', (req, res) => res.send('ResuMatch API is running.'));
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 
-app.post('/api/login', async (req, res) => {
-  const { email, password } = req.body;
-  
-  const { data, error } = await supabase.auth.signInWithPassword({ 
-    email: email, 
-    password: password 
-  });
-  
-  if (error) {
-    return res.status(400).json({ success: false, message: error.message });
-  }
-  
-  res.json({ success: true, data: data });
-});
+app.post('/api/login', createLoginHandler({
+  supabase,
+  secret: process.env.LOGIN_HASH_SECRET || process.env.SUPABASE_SERVICE_KEY,
+  createAuthClient: () => createClient(
+    process.env.SUPABASE_URL,
+    process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_KEY,
+    { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } },
+  ),
+}));
 app.post('/api/post-job', requireUser, requireRecruiter, async (req, res) => {
-  const job = pickJobFields(req.body);
+  const { job, error: fieldError } = pickJobFields(req.body);
+  if (fieldError) return res.status(400).json({ success: false, message: fieldError });
   if (!job.title) return res.status(400).json({ success: false, message: 'Job title is required.' });
 
   try {
@@ -105,7 +125,7 @@ app.post('/api/post-job', requireUser, requireRecruiter, async (req, res) => {
       .from('job_postings')
       .insert([{
         ...job,
-        recruiter_id: req.user.id, // taken from the verified token, not the request body
+        recruiter_id: req.user.id,
         status: 'active',
         hiring_status: 'open',
         is_archived: false,
@@ -126,7 +146,6 @@ app.post('/api/post-job', requireUser, requireRecruiter, async (req, res) => {
   }
 });
 
-// Recruiters can filter their own listings; archived jobs are excluded by default.
 app.get('/api/jobs', requireUser, requireRecruiter, async (req, res) => {
   const status = req.query.status || 'all';
   if (!['open', 'closed', 'archived', 'all'].includes(status)) {
@@ -194,10 +213,9 @@ app.patch('/api/jobs/:id/hiring-status', requireUser, requireRecruiter, async (r
   return updateOwnedJob(req, res, updates, 'Update Hiring Status', true);
 });
 
-// Edit an existing job listing. Only the recruiter who owns it can update it.
-// The match vector is regenerated so candidate match scores reflect the new details.
 app.put('/api/jobs/:id', requireUser, requireRecruiter, async (req, res) => {
-  const updates = pickJobFields(req.body);
+  const { job: updates, error: fieldError } = pickJobFields(req.body);
+  if (fieldError) return res.status(400).json({ success: false, message: fieldError });
   if ('title' in updates && !updates.title) {
     return res.status(400).json({ success: false, message: 'Job title is required.' });
   }
@@ -237,117 +255,25 @@ app.put('/api/jobs/:id', requireUser, requireRecruiter, async (req, res) => {
   }
 });
 
-app.post('/api/parse-resume', requireUser, async (req, res) => {
-  const { userId, fileName } = req.body;
-  if (userId !== req.user.id || !String(fileName || '').startsWith(req.user.id)) {
-    return res.status(403).json({ success: false, error: 'You can only parse your own resume.' });
+app.post('/api/parse-resume', requireUser, createParseResumeHandler({ supabase, ai }));
+
+app.post('/api/match-analysis', requireUser, async (req, res) => {
+  if (req.user?.user_metadata?.role !== 'job_seeker') {
+    return res.status(403).json({ success: false, message: 'Only candidate accounts have match analysis.' });
   }
-  console.log(`Processing file: ${fileName} for user: ${userId}`);
+  const jobIds = [...new Set(Array.isArray(req.body?.jobIds) ? req.body.jobIds : [])]
+    .filter((id) => typeof id === 'string' && id.length <= 64)
+    .slice(0, 25);
+  if (!jobIds.length) return res.json({ success: true, data: {} });
 
   try {
-    const { data: fileData, error: downloadError } = await supabase.storage
-      .from('resumes')
-      .download(fileName);
-
-    if (downloadError) throw new Error(`Supabase Download Error: ${downloadError.message}`);
-
-    const arrayBuffer = await fileData.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-    
-    const prompt = `
-      You are an expert HR parsing AI. Read the attached resume document and extract the data into a strict JSON object. 
-      Only return valid JSON, no markdown formatting or extra text.
-      
-      Required JSON Structure:
-      {
-        "experience": [
-          { "title": "Job Title", "company": "Company Name", "startDate": "YYYY", "endDate": "YYYY", "responsibilities": ["task 1", "task 2"] }
-        ],
-        "education": [
-          { "degree": "Degree Name", "school": "School Name", "year": "YYYY-YYYY" }
-        ],
-        "skills": ["Skill 1", "Skill 2"]
-      }
-    `;
-
-    let response;
-    let retries = 3;
-    let delay = 2000;
-
-    while (retries > 0) {
-      try {
-        response = await ai.models.generateContent({
-          model: 'gemini-3.6-flash',
-          contents: [
-            {
-              inlineData: {
-                data: buffer.toString("base64"),
-                mimeType: "application/pdf"
-              }
-            },
-            prompt
-          ],
-        });
-        break; 
-          } catch (error) {
-        if (error.status === 503 && retries > 1) {
-          console.warn(`Gemini API busy (503). Retrying in ${delay / 1000} seconds...`);
-          await new Promise(resolve => setTimeout(resolve, delay));
-          retries--;
-          delay *= 2; 
-        } else {
-          throw error; 
-        }
-      }
-    }
-
-    let aiResponseText = response.text;
-    
-    if (aiResponseText.includes('```json')) {
-      aiResponseText = aiResponseText.replace(/```json\n?/, '').replace(/\n?```/, '');
-    } else if (aiResponseText.includes('```')) {
-      aiResponseText = aiResponseText.replace(/```\n?/, '').replace(/\n?```/, '');
-    }
-
-    const structuredData = JSON.parse(aiResponseText.trim());
-    console.log("Successfully extracted data via Gemini!");
-
-    const textToEmbed = `Skills: ${structuredData.skills?.join(', ')}. Experience: ${JSON.stringify(structuredData.experience)}`;
-    
-    const embeddingResult = await ai.models.embedContent({
-      model: 'gemini-embedding-2',
-      contents: textToEmbed 
-    });
-    const vectorArray = embeddingResult.embeddings[0].values;
-    console.log("Successfully vectorized resume data!");
-console.log("Payload size:", vectorArray.length, "dimensions");
-console.log("Structured Data:", JSON.stringify(structuredData, null, 2));
-
-    const { error: updateError } = await supabase
-      .from('candidate_profiles') 
-      .update({
-        resume_data: structuredData, 
-        skills: structuredData.skills, 
-        experience: structuredData.experience, 
-        resume_embedding: vectorArray, 
-        resume_status: 'Parsed successfully',
-        last_synced: new Date().toISOString()
-      })
-      .eq('id', userId);
-      
-    if (updateError) throw new Error(`Database update failed: ${updateError.message}`);
-
-    res.json({ 
-      success: true, 
-      data: structuredData,
-      message: "Resume parsed and vectorized successfully."
-    });
-
+    const data = await analyzeJobsForCandidate({ supabase, ai, candidateId: req.user.id, jobIds });
+    res.json({ success: true, data });
   } catch (error) {
-    console.error("Parsing Error:", error);
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Match Analysis Error:', error.message, '\n  cause:', error.cause?.cause || error.cause || 'none');
+    res.status(500).json({ success: false, message: error.message || 'Could not analyse your match.' });
   }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, '0.0.0.0', () => console.log(`Backend AI Server running on port ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`Backend AI Server running on port ${PORT}`));

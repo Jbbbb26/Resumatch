@@ -3,7 +3,6 @@ import ReactQuill, { Quill } from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
 import { jobTextOnly } from '../../data/services/jobText';
 
-// Pixel sizes produce inline font-size styles, so they also appear in candidate job descriptions.
 const FONT_SIZES = ['12px', '14px', '16px', '18px', '20px', '24px', '32px'];
 const SizeStyle = Quill.import('attributors/style/size');
 SizeStyle.whitelist = FONT_SIZES;

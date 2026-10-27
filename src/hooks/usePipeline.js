@@ -46,7 +46,7 @@ export function usePipeline(recruiterId) {
       const availableIds = new Set(availableJobs.map((job) => job.id));
       setJobs(availableJobs);
       setApplications((applicationResult.data || [])
-        .filter((application) => availableIds.has(application.job_id))
+        .filter((application) => availableIds.has(application.job_id) && application.status !== 'Withdrawn')
         .map((application) => ({ ...application, stage: normalizePipelineStage(application) })));
     } catch (loadError) {
       console.error('Pipeline load error:', loadError);
@@ -79,7 +79,9 @@ export function usePipeline(recruiterId) {
     setFilters((current) => ({ ...current, [key]: value }));
   }, []);
 
-  const moveCandidate = useCallback(async (id, stage, reason = '') => {
+  const moveCandidate = useCallback(async (id, stage, details = {}) => {
+    const extra = typeof details === 'string' ? { reason: details } : (details || {});
+    const reason = extra.reason || '';
     if (!PIPELINE_STAGES.some((item) => item.id === stage)) {
       setError('Invalid pipeline stage.');
       return false;
@@ -87,24 +89,25 @@ export function usePipeline(recruiterId) {
     const current = applications.find((item) => item.id === id);
     if (!current || current.stage === stage) return true;
     const previous = current;
-    const updated = {
-      ...current,
+    const changes = {
       stage,
       status: STATUS_BY_STAGE[stage],
       rejection_reason: stage === 'rejected' ? reason.trim() || null : current.rejection_reason,
-      stage_updated_at: new Date().toISOString(),
     };
+    if (stage === 'rejected') changes.candidate_feedback = (extra.feedback || '').trim() || null;
+    if (stage === 'interview') {
+      for (const key of ['interview_at', 'interview_mode', 'interview_location', 'interview_notes']) {
+        if (key in extra) changes[key] = extra[key];
+      }
+    }
+    const updated = { ...current, ...changes, stage_updated_at: new Date().toISOString() };
 
     setError('');
     setApplications((items) => items.map((item) => item.id === id ? updated : item));
     setAnnouncement(`${current.candidate_profiles?.firstName || 'Candidate'} moved to ${PIPELINE_STAGES.find((item) => item.id === stage)?.label}.`);
     const { error: updateError } = await supabase
       .from('applications')
-      .update({
-        stage,
-        status: STATUS_BY_STAGE[stage],
-        rejection_reason: stage === 'rejected' ? reason.trim() || null : current.rejection_reason,
-      })
+      .update(changes)
       .eq('id', id);
 
     if (updateError) {
@@ -112,6 +115,19 @@ export function usePipeline(recruiterId) {
       setApplications((items) => items.map((item) => item.id === id ? previous : item));
       setError(updateError.message || 'Unable to move this candidate. The change was rolled back.');
       setAnnouncement('Candidate move failed. The previous stage was restored.');
+      return false;
+    }
+    return true;
+  }, [applications]);
+
+  const updateInterview = useCallback(async (id, fields) => {
+    const previous = applications.find((item) => item.id === id);
+    if (!previous) return false;
+    setApplications((items) => items.map((item) => item.id === id ? { ...item, ...fields } : item));
+    const { error: updateError } = await supabase.from('applications').update(fields).eq('id', id);
+    if (updateError) {
+      setApplications((items) => items.map((item) => item.id === id ? previous : item));
+      setError(updateError.message || 'Unable to update the interview.');
       return false;
     }
     return true;
@@ -156,6 +172,7 @@ export function usePipeline(recruiterId) {
     filters,
     updateFilter,
     moveCandidate,
+    updateInterview,
     saveNotes,
     loading,
     error,
