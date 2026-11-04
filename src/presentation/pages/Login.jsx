@@ -299,7 +299,7 @@ export default function Login() {
       </main>
 
       <footer className="flex flex-col sm:flex-row items-center justify-between gap-3 px-8 py-6 text-xs font-medium text-slate-500">
-        <div>© {new Date().getFullYear()} ResuMatch. All rights reserved.</div>
+        <div>© {new Date().getFullYear()} ResuMatch. All right reserved.</div>
         <div className="flex gap-6">
           <Link to="/privacy" className="hover:text-slate-800">Privacy Policy</Link>
           <Link to="/terms" className="hover:text-slate-800">Terms of Service</Link>
