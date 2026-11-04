@@ -1,6 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { logoutUser, getCurrentUser, updateUserMetadata, createPublicProfile } from "../../data/services/authService";
+import { useAuth } from "../../hooks/useAuth";
+import { useApplications } from "../../hooks/useApplications";
+import { useJobData } from "../../hooks/useJobData";
+import { useProfileData } from "../../hooks/useProfileData";
 import { TopHeader } from "../components/TopHeader";
 import { ShareButton, jobShareUrl } from "../components/ShareButton";
 import { FilterModal, DEFAULT_JOB_FILTERS, countActiveFilters, jobMatchesFilters } from "../components/FilterModal";
@@ -8,13 +11,12 @@ import { formatSalary } from "../../data/jobOptions";
 import { ApplicationsModal } from "../components/ApplicationsModal";
 import { ApplicationDetailModal } from "../components/ApplicationDetailModal";
 import { ProfileModal } from "../components/ProfileModal";
-import { supabase } from "../../../supabaseClient.js";
 import { ApplicationFormModal } from "../components/ApplicationFormModal";
 import { JobDescription } from "../components/JobDescription";
 import { AttachmentList } from "../components/AttachmentList";
 import { useApplyToJob } from "../../hooks/useApplyToJob";
 import { useJobAttachments } from "../../hooks/useJobAttachments";
-import { useJobs, fetchMatchAnalyses } from "../../hooks/useJobs";
+import { useJobs } from "../../hooks/useJobs";
 import { jobTextOnly } from "../../data/services/jobText";
 import { MatchAnalysis } from "../components/MatchAnalysis";
 
@@ -120,7 +122,7 @@ function JobListItem({ job, isSelected, isApplied, isSaved, isSaving, onSelect, 
           {formatSalary(job) && <span className={`rounded-md px-2 py-1 text-[10px] font-semibold ${isDarkMode ? 'bg-[#3c8eec]/15 text-[#8bbcf5]' : 'bg-blue-50 text-blue-700'}`}>{formatSalary(job)}</span>}
           {isApplied && <span className="rounded-md bg-emerald-600 px-2 py-1 text-[10px] font-bold text-white">Applied</span>}
           {isClosed && <span className="rounded-md bg-amber-500/15 px-2 py-1 text-[10px] font-semibold text-amber-600">Not hiring</span>}
-          {job.qualification_mismatch && <span className="rounded-md bg-amber-500/15 px-2 py-1 text-[10px] font-semibold text-amber-600">Nursing qualifications not found</span>}
+          {job.qualification_mismatch && <span className="rounded-md bg-amber-500/15 px-2 py-1 text-[10px] font-semibold text-amber-600">Missing: {job.missing_qualification || 'a required qualification'}</span>}
           {isSaved && <span className={`rounded-md px-2 py-1 text-[10px] font-semibold ${isDarkMode ? 'bg-[#ea6036]/20 text-[#ff8a5c]' : 'bg-orange-50 text-[#ea6036]'}`}>Saved</span>}
         </div>
 
@@ -441,6 +443,13 @@ function JobDetailsModal({ job, profile, userId, application, isDarkMode, logoUr
 }
 
 export default function CandidateDashboard() {
+  const { createPublicProfile, getCurrentUser, logoutUser, updateUserMetadata } = useAuth();
+  const { listCandidateApplications } = useApplications();
+  const {
+    SAVED_JOB_WITH_RECRUITER_SELECT, fetchMatchAnalyses, getCompanyName, getJobById, listCachedMatchScores,
+    listCompanyNames, listEmployers, listSavedJobs, saveJob, unsaveJob,
+  } = useJobData();
+  const { getCandidateProfileFields } = useProfileData();
   const navigate = useNavigate();
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [isFilterModalOpen, setFilterModalOpen] = useState(false);
@@ -456,6 +465,8 @@ export default function CandidateDashboard() {
   const [externalSelectedJob, setExternalSelectedJob] = useState(null);
   const [titleQuery, setTitleQuery] = useState('');
   const [locationQuery, setLocationQuery] = useState('');
+  const [searchSummary, setSearchSummary] = useState('');
+  const resultsHeadingRef = useRef(null);
   const [jobView, setJobView] = useState('recommended');
   const [jobSort, setJobSort] = useState('match');
   const [jobFilters, setJobFilters] = useState(DEFAULT_JOB_FILTERS);
@@ -504,25 +515,20 @@ export default function CandidateDashboard() {
     setApplicationsLoading(true);
     setApplicationsError('');
     try {
-      const { data, error } = await supabase
-        .from('applications')
-        .select('*, job_postings(id, title, recruiter_id)')
-        .eq('candidate_id', userId)
-        .order('applied_at', { ascending: false });
+      const { data, error } = await listCandidateApplications(userId);
       if (error) throw error;
 
       const recruiterIds = [...new Set((data || []).map((a) => a.job_postings?.recruiter_id).filter(Boolean))];
       let companies = {};
       if (recruiterIds.length) {
-        const { data: employers } = await supabase.from('employers').select('id, companyName').in('id', recruiterIds);
+        const { data: employers } = await listCompanyNames(recruiterIds);
         companies = Object.fromEntries((employers || []).map((e) => [e.id, e.companyName]));
       }
 
       const jobIds = [...new Set((data || []).map((a) => a.job_id).filter(Boolean))];
       let currentScores = {};
       if (jobIds.length) {
-        const { data: analyses } = await supabase.from('job_match_analysis')
-          .select('job_id, score').eq('candidate_id', userId).in('job_id', jobIds);
+        const { data: analyses } = await listCachedMatchScores(userId, jobIds);
         currentScores = Object.fromEntries((analyses || []).map((row) => [row.job_id, row.score]));
       }
 
@@ -595,20 +601,13 @@ export default function CandidateDashboard() {
 
           await createPublicProfile(response.data.id, response.data.email, 'job_seeker', metadata.full_name || metadata.name || '');
 
-          const { data: candidateProfile, error: profileError } = await supabase
-            .from('candidate_profiles')
-            .select('*')
-            .eq('id', response.data.id)
-            .maybeSingle();
+          const { data: candidateProfile, error: profileError } = await getCandidateProfileFields(response.data.id);
           if (profileError) throw profileError;
           setProfile(candidateProfile);
 
           await loadApplications(response.data.id);
 
-          const { data: savedData } = await supabase
-            .from('saved_jobs')
-            .select('id, job_posting_id, created_at, job_postings(id, recruiter_id, title, location, work_type, employment_type, status, hiring_status, is_archived, created_at)')
-            .eq('candidate_id', response.data.id);
+          const { data: savedData } = await listSavedJobs(response.data.id);
 
           if (savedData) setSavedJobs(savedData);
 
@@ -639,7 +638,7 @@ export default function CandidateDashboard() {
     }
     let active = true;
     const loadCompanyLogos = async () => {
-      const { data, error } = await supabase.from('employers').select('*').in('id', recruiterIds);
+      const { data, error } = await listEmployers(recruiterIds);
       if (error || !active) return;
       const logos = Object.fromEntries((data || []).map((company) => [
         company.id,
@@ -660,15 +659,11 @@ export default function CandidateDashboard() {
     try {
       const existing = savedJobs.find((saved) => saved.job_posting_id === job.id);
       if (existing) {
-        const { error } = await supabase.from('saved_jobs')
-          .delete().eq('id', existing.id).eq('candidate_id', user.id);
+        const { error } = await unsaveJob(existing.id, user.id);
         if (error) throw error;
         setSavedJobs((current) => current.filter((saved) => saved.job_posting_id !== job.id));
       } else {
-        const { data, error } = await supabase.from('saved_jobs')
-          .insert([{ candidate_id: user.id, job_posting_id: job.id }])
-          .select('id,job_posting_id,created_at,job_postings(id,recruiter_id,title,location,work_type,employment_type,status,hiring_status,is_archived,created_at)')
-          .single();
+        const { data, error } = await saveJob(user.id, job.id, SAVED_JOB_WITH_RECRUITER_SELECT);
         if (error) throw error;
         setSavedJobs((current) => current.some((saved) => saved.job_posting_id === job.id)
           ? current : [data, ...current]);
@@ -701,6 +696,27 @@ export default function CandidateDashboard() {
       jobMatchesFilters(job, jobFilters)
     );
   }, [jobs, recommendedJobs, jobView, titleQuery, locationQuery, jobFilters]);
+  const searchCount = useMemo(() => {
+    const titleSearch = titleQuery.trim().toLowerCase();
+    const locationSearch = locationQuery.trim().toLowerCase();
+    return jobs.filter((job) =>
+      (!titleSearch || jobText(job).includes(titleSearch)) &&
+      (!locationSearch || [job.location, job.work_type].filter(Boolean).join(' ').toLowerCase().includes(locationSearch)) &&
+      jobMatchesFilters(job, jobFilters)
+    ).length;
+  }, [jobs, titleQuery, locationQuery, jobFilters]);
+
+  const handleSearchSubmit = (event) => {
+    event.preventDefault();
+    setJobView('all');
+    const terms = [titleQuery.trim() && `"${titleQuery.trim()}"`, locationQuery.trim() && `in "${locationQuery.trim()}"`].filter(Boolean).join(' ');
+    setSearchSummary(`${searchCount} ${searchCount === 1 ? 'job' : 'jobs'} found${terms ? ` for ${terms}` : ''} in All jobs.`);
+    requestAnimationFrame(() => {
+      resultsHeadingRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      resultsHeadingRef.current?.focus({ preventScroll: true });
+    });
+  };
+
   const sortedJobs = useMemo(
     () => [...filteredJobs].sort(JOB_COMPARATORS[jobSort] || JOB_COMPARATORS.match),
     [filteredJobs, jobSort],
@@ -743,13 +759,12 @@ export default function CandidateDashboard() {
     }
     setSavedError('');
     try {
-      const { data, error } = await supabase.from('job_postings').select('*').eq('id', jobId).maybeSingle();
+      const { data, error } = await getJobById(jobId);
       if (error) throw error;
       if (!data) throw new Error('This job is no longer available.');
       let employerName = companyNames[data.recruiter_id];
       if (!employerName && data.recruiter_id) {
-        const { data: employer } = await supabase.from('employers')
-          .select('companyName').eq('id', data.recruiter_id).maybeSingle();
+        const { data: employer } = await getCompanyName(data.recruiter_id);
         employerName = employer?.companyName;
       }
       setExternalSelectedJob({ ...data, company_name: employerName || 'Company name not provided', match: null });
@@ -810,31 +825,37 @@ export default function CandidateDashboard() {
           </p>
         </div>
 
-        <div className={`flex flex-col md:flex-row items-center gap-3 p-2 rounded-2xl border mb-8 shadow-lg transition-colors ${isDarkMode ? 'bg-[#121b27] border-white/5' : 'bg-white border-slate-200'}`}>
+        <form role="search" onSubmit={handleSearchSubmit} className={`flex flex-col md:flex-row items-center gap-3 p-2 rounded-2xl border mb-8 shadow-lg transition-colors ${isDarkMode ? 'bg-[#121b27] border-white/5' : 'bg-white border-slate-200'}`}>
           <div className={`flex-1 flex items-center px-4 w-full border-b md:border-b-0 md:border-r pb-2 md:pb-0 ${isDarkMode ? 'border-white/10' : 'border-slate-200'}`}>
             <svg className="w-5 h-5 text-slate-500 mr-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
-            <input type="text" value={titleQuery} onChange={(event) => setTitleQuery(event.target.value)} placeholder="Job title, skill, or company" className={`w-full bg-transparent border-none focus:ring-0 text-sm py-2 outline-none ${isDarkMode ? 'text-white placeholder-slate-500' : 'text-slate-900 placeholder-slate-400'}`} />
+            <input type="text" value={titleQuery} onChange={(event) => { setTitleQuery(event.target.value); setSearchSummary(''); }} placeholder="Job title, skill, or company" className={`w-full bg-transparent border-none focus:ring-0 text-sm py-2 outline-none ${isDarkMode ? 'text-white placeholder-slate-500' : 'text-slate-900 placeholder-slate-400'}`} />
           </div>
           <div className="flex-1 flex items-center px-4 w-full">
             <svg className="w-5 h-5 text-slate-500 mr-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
-            <input type="text" value={locationQuery} onChange={(event) => setLocationQuery(event.target.value)} placeholder="City or region" className={`w-full bg-transparent border-none focus:ring-0 text-sm py-2 outline-none ${isDarkMode ? 'text-white placeholder-slate-500' : 'text-slate-900 placeholder-slate-400'}`} />
+            <input type="text" value={locationQuery} onChange={(event) => { setLocationQuery(event.target.value); setSearchSummary(''); }} placeholder="City or region" className={`w-full bg-transparent border-none focus:ring-0 text-sm py-2 outline-none ${isDarkMode ? 'text-white placeholder-slate-500' : 'text-slate-900 placeholder-slate-400'}`} />
           </div>
           <div className="flex items-center gap-3 w-full md:w-auto px-2 md:px-0 mt-2 md:mt-0">
             <button type="button" onClick={() => setFilterModalOpen(true)} aria-label={activeFilterCount ? `Filters, ${activeFilterCount} active` : 'Filters'} className={`relative p-2.5 rounded-xl transition-colors border ${activeFilterCount ? 'border-[#ea6036] text-[#ea6036]' : ''} ${isDarkMode ? `bg-[#1a2636] hover:bg-[#233348] ${activeFilterCount ? '' : 'text-slate-300 border-white/5'}` : `bg-slate-100 hover:bg-slate-200 ${activeFilterCount ? '' : 'text-slate-600 border-slate-200'}`}`}>
               {activeFilterCount > 0 && <span className="absolute -top-1.5 -right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-[#ea6036] px-1 text-[9px] font-bold text-white">{activeFilterCount}</span>}
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"></path></svg>
             </button>
-            <button type="button" onClick={() => setJobView('all')} className="flex-1 md:flex-none px-8 py-2.5 bg-[#ea6036] hover:bg-[#d8552e] text-white text-sm font-bold uppercase tracking-wider rounded-xl transition-colors shadow-lg">
+            <button type="submit" className="flex-1 md:flex-none px-8 py-2.5 bg-[#ea6036] hover:bg-[#d8552e] text-white text-sm font-bold uppercase tracking-wider rounded-xl transition-colors shadow-lg">
               Search
             </button>
           </div>
-        </div>
+        </form>
 
+        {searchSummary && (
+          <p role="status" aria-live="polite" className={`-mt-5 mb-6 text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>
+            {searchSummary}{' '}
+            <button type="button" onClick={() => { setTitleQuery(''); setLocationQuery(''); setSearchSummary(''); }} className="font-semibold text-[#ea6036] hover:underline">Clear search</button>
+          </p>
+        )}
         {savedError && <p role="alert" className="mb-3 text-xs text-red-500">{savedError}</p>}
         <div className="mb-12 grid grid-cols-1 items-start gap-6 lg:grid-cols-[minmax(0,1.65fr)_minmax(320px,1fr)] lg:gap-8">
           <section aria-label={jobView === 'recommended' ? 'Recommended job listings' : 'All job listings'} className="min-w-0">
             <div className="mb-4 flex min-h-8 flex-wrap items-center gap-2">
-              <h2 className={`text-xl font-serif ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
+              <h2 ref={resultsHeadingRef} tabIndex={-1} className={`text-xl font-serif outline-none ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
                 {jobView === 'recommended' ? 'Recommended' : 'All jobs'}
               </h2>
               {!jobsLoading && !jobsError && (
@@ -893,13 +914,13 @@ export default function CandidateDashboard() {
               </div>
             )}
             <p className={`mt-4 text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-              <button type="button" onClick={() => setProfileModalOpen(true)} className="text-[#3c8eec] hover:underline">Update your profile</button> to improve matching. Jobs lacking a recommendation score or failing the nursing qualification check remain searchable in All jobs.
+              <button type="button" onClick={() => setProfileModalOpen(true)} className="text-[#3c8eec] hover:underline">Update your profile</button> to improve matching. Some jobs aren't recommended because your resume doesn't show a required qualification. You can still find them in All jobs.
             </p>
           </section>
 
           <aside aria-label="Saved jobs" className="min-w-0">
             <div className="mb-4 flex min-h-8 items-center justify-between gap-3">
-              <h2 className={`text-xl font-serif ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>Saved jobs</h2>
+              <h2 ref={resultsHeadingRef} tabIndex={-1} className={`text-xl font-serif outline-none ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>Saved jobs</h2>
               <span className={`text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
                 {visibleSavedJobs.length} saved
               </span>
@@ -996,8 +1017,7 @@ export default function CandidateDashboard() {
           onClose={async () => {
             setProfileModalOpen(false);
             if (!user?.id) return;
-            const { data, error } = await supabase.from('candidate_profiles')
-              .select('*').eq('id', user.id).maybeSingle();
+            const { data, error } = await getCandidateProfileFields(user.id);
             if (!error && data) setProfile(data);
           }}
           onLogout={handleLogout}

@@ -1,3 +1,5 @@
+import { MATCH_SCORE_DEFAULTS, explainMatchScore } from '../../data/matchExplanation';
+
 const pct = (value) => Math.round(Math.max(0, Math.min(1, Number(value) || 0)) * 100);
 
 const STATUS = {
@@ -8,18 +10,22 @@ const STATUS = {
 
 const EVIDENCE_LABEL = { skill: 'Skill', experience: 'Experience', education: 'Education', summary: 'Summary' };
 
-function headlineExplanation(job, analysis, recruiter) {
+const points = (value) => (Math.round(value * 10) / 10).toFixed(1);
+
+function headlineExplanation(job, analysis, recruiter, scoreLabel) {
   if (job.qualification_mismatch) {
-    return 'This shows 0% because it is a clinical nursing role and no nursing degree, nursing experience or clinical skills were found on your profile.';
+    const requirement = job.missing_qualification || 'a required qualification';
+    return `This shows 0% because this job requires ${requirement.charAt(0).toLowerCase()}${requirement.slice(1)}, and it was not found on ${recruiter ? "the candidate's" : 'your'} resume.`;
   }
   if (!analysis) {
     if (job.matchAnalysisError) return `The match analysis could not be loaded: ${job.matchAnalysisError}`;
     return 'There is no match score for this job yet. Either it was not in your top recommendations, or your profile does not have enough parsed resume data to compare.';
   }
+  const label = scoreLabel ? `${scoreLabel} of ${analysis.score}%` : `${analysis.score}%`;
   if (recruiter) {
-    return `Each requirement in this posting was compared with every skill, duty and qualification on the candidate's resume using AI embeddings. The ${analysis.score}% mostly reflects how many requirements have close evidence on their resume.`;
+    return `Each requirement in this posting was compared with every skill, duty and qualification on the candidate's resume using AI embeddings. The ${label} mostly reflects how many requirements have close evidence on their resume.`;
   }
-  return `Each requirement in this posting was compared with every skill, duty and qualification on your resume using AI embeddings. Your ${analysis.score}% mostly reflects how many requirements have close evidence on your resume.`;
+  return `Each requirement in this posting was compared with every skill, duty and qualification on your resume using AI embeddings. Your ${label} mostly reflects how many requirements have close evidence on your resume.`;
 }
 
 function RequirementRow({ row, isDarkMode, whose = 'your' }) {
@@ -33,7 +39,7 @@ function RequirementRow({ row, isDarkMode, whose = 'your' }) {
           <p className={`mt-1 text-xs leading-relaxed ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
             <span className="font-semibold">{status.label}</span>
             {' · '}{row.status === 'missing'
-              ? `closest line on ${whose} resume is only ${pct(row.similarity)}% similar (73% needed)`
+              ? `closest line on ${whose} resume is only ${pct(row.similarity)}% similar (${pct(MATCH_SCORE_DEFAULTS.partialAt)}% needed)`
               : `${pct(row.similarity)}% similar to ${whose} resume`}
             {row.source === 'description' && ' · from job description'}
           </p>
@@ -48,7 +54,31 @@ function RequirementRow({ row, isDarkMode, whose = 'your' }) {
   );
 }
 
-export function MatchAnalysis({ job, isDarkMode, className = '', audience = 'candidate', title = 'Why this score?', isLoading = false }) {
+function ScoreFormula({ analysis, muted, isDarkMode, recruiter }) {
+  const parts = explainMatchScore(analysis);
+  if (!parts) return null;
+  const belowFloor = parts.similarity != null && parts.overallCredit === 0;
+  return (
+    <div className={`border-t pt-3 text-xs leading-relaxed ${isDarkMode ? 'border-white/10' : 'border-slate-200'} ${muted}`}>
+      <p className="font-semibold">How it's calculated</p>
+      <ul className="mt-1 space-y-0.5">
+        <li>Requirement coverage {pct(parts.coverage)}% × {Math.round(parts.coverageWeight * 100)}% = {points(parts.coveragePoints)} points <span className="opacity-80">(listed requirements count twice as much as description lines)</span></li>
+        <li>
+          Overall resume match {pct(parts.overallCredit)}% × {Math.round(parts.overallWeight * 100)}% = {points(parts.overallPoints)} points
+          {parts.similarity != null && (
+            <span className="opacity-80"> (overall similarity {pct(parts.similarity)}%; {belowFloor
+              ? `similarity below ${pct(parts.floor)}% counts as 0%`
+              : `${pct(parts.floor)}% similarity counts as 0% and ${pct(parts.ceiling)}% or more counts as 100%`})</span>
+          )}
+        </li>
+        <li className="font-semibold">Total {points(parts.coveragePoints)} + {points(parts.overallPoints)} = {points(parts.total)}, shown as {parts.score}%</li>
+      </ul>
+      {!recruiter && <p className="mt-1">To raise it, add true, specific evidence to your resume for the requirements marked "Not found".</p>}
+    </div>
+  );
+}
+
+export function MatchAnalysis({ job, isDarkMode, className = '', audience = 'candidate', title = 'Why this score?', isLoading = false, scoreLabel = '' }) {
   const recruiter = audience === 'recruiter';
   const whose = recruiter ? "the candidate's" : 'your';
   const analysis = job?.matchAnalysis || null;
@@ -66,7 +96,7 @@ export function MatchAnalysis({ job, isDarkMode, className = '', audience = 'can
         <p className={`text-sm leading-relaxed ${muted}`}>
           {isLoading && !analysis
             ? 'Comparing your resume with each requirement in this job. This takes a few seconds the first time…'
-            : headlineExplanation(job, analysis, recruiter)}
+            : headlineExplanation(job, analysis, recruiter, scoreLabel)}
         </p>
       </div>
 
@@ -97,11 +127,7 @@ export function MatchAnalysis({ job, isDarkMode, className = '', audience = 'can
             </details>
           )}
 
-          <p className={`border-t pt-3 text-xs leading-relaxed ${isDarkMode ? 'border-white/10' : 'border-slate-200'} ${muted}`}>
-            How it's calculated: requirement coverage {pct(analysis.coverage)}% (85% of the score; listed requirements count twice as much as description lines)
-            {analysis.overallSimilarity != null && <> plus overall resume similarity {pct(analysis.overallSimilarity)}% (15%)</>}.
-            {!recruiter && ' To raise it, add true, specific evidence to your resume for the requirements marked "Not found".'}
-          </p>
+          <ScoreFormula analysis={analysis} muted={muted} isDarkMode={isDarkMode} recruiter={recruiter} />
         </>
       )}
 

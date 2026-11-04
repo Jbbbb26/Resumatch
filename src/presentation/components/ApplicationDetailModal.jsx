@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { supabase } from '../../../supabaseClient.js';
+import { useApplications } from '../../hooks/useApplications';
+import { useJobData } from '../../hooks/useJobData';
 
 const STEPS = ['Applied', 'Screening', 'Interview', 'Offer', 'Hired'];
 const REAPPLY_COOLDOWN_DAYS = 30;
@@ -18,6 +19,8 @@ function calendarLink({ title, start, details, location }) {
 }
 
 export function ApplicationDetailModal({ applicationId, isDarkMode, onClose, onChanged }) {
+  const { getApplicationDetail, subscribeToApplicationUpdates, withdrawApplication } = useApplications();
+  const { getCompanyName } = useJobData();
   const [application, setApplication] = useState(null);
   const [companyName, setCompanyName] = useState('');
   const [isLoading, setIsLoading] = useState(true);
@@ -39,11 +42,7 @@ export function ApplicationDetailModal({ applicationId, isDarkMode, onClose, onC
     const load = async () => {
       setIsLoading(true);
       setError('');
-      const { data, error: loadError } = await supabase
-        .from('applications')
-        .select('id, job_id, status, applied_at, status_updated_at, withdrawn_at, interview_at, interview_mode, interview_location, interview_notes, candidate_feedback, job_postings(id, title, location, work_type, recruiter_id)')
-        .eq('id', applicationId)
-        .maybeSingle();
+      const { data, error: loadError } = await getApplicationDetail(applicationId);
       if (cancelled) return;
       if (loadError || !data) {
         setError(loadError?.message || 'This application could not be found.');
@@ -53,18 +52,15 @@ export function ApplicationDetailModal({ applicationId, isDarkMode, onClose, onC
       setApplication(data);
       const recruiterId = data.job_postings?.recruiter_id;
       if (recruiterId) {
-        const { data: employer } = await supabase.from('employers').select('companyName').eq('id', recruiterId).maybeSingle();
+        const { data: employer } = await getCompanyName(recruiterId);
         if (!cancelled) setCompanyName(employer?.companyName || '');
       }
       setIsLoading(false);
     };
     load();
-    const channel = supabase
-      .channel(`application-detail-${applicationId}`)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'applications', filter: `id=eq.${applicationId}` }, () => load())
-      .subscribe();
-    return () => { cancelled = true; supabase.removeChannel(channel); };
-  }, [applicationId]);
+    const unsubscribe = subscribeToApplicationUpdates(applicationId, () => load());
+    return () => { cancelled = true; unsubscribe(); };
+  }, [applicationId, getApplicationDetail, getCompanyName, subscribeToApplicationUpdates]);
 
   const heading = isDarkMode ? 'text-white' : 'text-slate-900';
   const muted = isDarkMode ? 'text-slate-400' : 'text-slate-500';
@@ -80,7 +76,7 @@ export function ApplicationDetailModal({ applicationId, isDarkMode, onClose, onC
   const withdraw = async () => {
     setIsWithdrawing(true);
     setWithdrawError('');
-    const { data, error: rpcError } = await supabase.rpc('withdraw_application', { p_application_id: applicationId });
+    const { data, error: rpcError } = await withdrawApplication(applicationId);
     setIsWithdrawing(false);
     if (rpcError) {
       setWithdrawError(rpcError.message || 'Could not withdraw this application.');

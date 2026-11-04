@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import mammoth from 'mammoth';
 import DOMPurify from 'dompurify';
-import { supabase } from '../../supabaseClient.js';
+import { downloadAttachment } from '../data/services/attachmentService';
 
-const BUCKET = 'job-attachments';
 
 export function useAttachmentPreview() {
   const [preview, setPreview] = useState(null);
@@ -50,7 +49,7 @@ export function useAttachmentPreview() {
     }
 
     try {
-      const { data: file, error: downloadError } = await supabase.storage.from(BUCKET).download(attachment.file_path);
+      const { data: file, error: downloadError } = await downloadAttachment(attachment.file_path);
       if (downloadError) throw downloadError;
       if (!file) throw new Error('The file download returned no data.');
       if (requestId.current !== currentRequestId) return;

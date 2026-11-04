@@ -16,6 +16,13 @@ export const STATUS_BY_STAGE = {
   rejected: 'Rejected',
 };
 
+// One ranking rule everywhere (Review, dashboard top match, pipeline columns):
+// the match score saved when the candidate applied, highest first; earlier application wins a tie.
+export const rankingScore = (application) => Number(application?.match_score) || 0;
+
+export const compareByRanking = (a, b) => (rankingScore(b) - rankingScore(a))
+  || (new Date(a?.applied_at || 0) - new Date(b?.applied_at || 0));
+
 export const normalizePipelineStage = (application) => {
   const stage = application.stage?.toLowerCase();
   if (PIPELINE_STAGES.some((item) => item.id === stage)) return stage;

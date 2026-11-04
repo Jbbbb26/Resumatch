@@ -1,12 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { supabase } from '../../supabaseClient.js';
-import { PIPELINE_STAGES, STATUS_BY_STAGE, normalizePipelineStage } from '../data/pipelineStages';
-
-const APPLICATION_SELECT = `
-  *,
-  job_postings!inner(id, title, recruiter_id, is_archived, hiring_status),
-  candidate_profiles(*)
-`;
+import { PIPELINE_STAGES, STATUS_BY_STAGE, compareByRanking, normalizePipelineStage } from '../data/pipelineStages';
+import { listPipelineApplications, listRecruiterJobsForPipeline, subscribeToApplications, updateApplication } from '../data/services/pipelineService';
 
 export function usePipeline(recruiterId) {
   const [applications, setApplications] = useState([]);
@@ -29,14 +23,8 @@ export function usePipeline(recruiterId) {
     setError('');
     try {
       const [jobResult, applicationResult] = await Promise.all([
-        supabase.from('job_postings')
-          .select('id, title, is_archived, hiring_status')
-          .eq('recruiter_id', recruiterId)
-          .order('created_at', { ascending: false }),
-        supabase.from('applications')
-          .select(APPLICATION_SELECT)
-          .eq('job_postings.recruiter_id', recruiterId)
-          .order('applied_at', { ascending: false }),
+        listRecruiterJobsForPipeline(recruiterId),
+        listPipelineApplications(recruiterId),
       ]);
       if (currentRequest !== requestId.current) return;
       if (jobResult.error) throw jobResult.error;
@@ -62,17 +50,13 @@ export function usePipeline(recruiterId) {
 
   useEffect(() => {
     if (!recruiterId) return undefined;
-    const channel = supabase
-      .channel(`recruiter-pipeline-${recruiterId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'applications' }, () => refetch())
-      .subscribe((status) => {
-        if (status === 'SUBSCRIBED') {
-          setError('');
-        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-          setError('Live updates disconnected. Retry loading or refresh the page.');
-        }
-      });
-    return () => { supabase.removeChannel(channel); };
+    return subscribeToApplications(`recruiter-pipeline-${recruiterId}`, () => refetch(), (status) => {
+      if (status === 'SUBSCRIBED') {
+        setError('');
+      } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        setError('Live updates disconnected. Retry loading or refresh the page.');
+      }
+    });
   }, [recruiterId, refetch]);
 
   const updateFilter = useCallback((key, value) => {
@@ -105,10 +89,7 @@ export function usePipeline(recruiterId) {
     setError('');
     setApplications((items) => items.map((item) => item.id === id ? updated : item));
     setAnnouncement(`${current.candidate_profiles?.firstName || 'Candidate'} moved to ${PIPELINE_STAGES.find((item) => item.id === stage)?.label}.`);
-    const { error: updateError } = await supabase
-      .from('applications')
-      .update(changes)
-      .eq('id', id);
+    const { error: updateError } = await updateApplication(id, changes);
 
     if (updateError) {
       console.error('Pipeline stage update error:', updateError);
@@ -124,7 +105,7 @@ export function usePipeline(recruiterId) {
     const previous = applications.find((item) => item.id === id);
     if (!previous) return false;
     setApplications((items) => items.map((item) => item.id === id ? { ...item, ...fields } : item));
-    const { error: updateError } = await supabase.from('applications').update(fields).eq('id', id);
+    const { error: updateError } = await updateApplication(id, fields);
     if (updateError) {
       setApplications((items) => items.map((item) => item.id === id ? previous : item));
       setError(updateError.message || 'Unable to update the interview.');
@@ -137,7 +118,7 @@ export function usePipeline(recruiterId) {
     const previous = applications.find((item) => item.id === id);
     if (!previous) return false;
     setApplications((items) => items.map((item) => item.id === id ? { ...item, notes } : item));
-    const { error: updateError } = await supabase.from('applications').update({ notes }).eq('id', id);
+    const { error: updateError } = await updateApplication(id, { notes });
     if (updateError) {
       setApplications((items) => items.map((item) => item.id === id ? previous : item));
       setError(updateError.message || 'Unable to save candidate notes.');
@@ -161,7 +142,7 @@ export function usePipeline(recruiterId) {
   }, [applications, filters]);
 
   const groupedByStage = useMemo(() => Object.fromEntries(
-    PIPELINE_STAGES.map(({ id }) => [id, filteredApplications.filter((application) => application.stage === id)]),
+    PIPELINE_STAGES.map(({ id }) => [id, filteredApplications.filter((application) => application.stage === id).sort(compareByRanking)]),
   ), [filteredApplications]);
 
   return {

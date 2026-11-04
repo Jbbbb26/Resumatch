@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { supabase } from '../../supabaseClient.js';
+import { applyToJob } from '../data/services/applicationService';
 import { calculateMatchScore } from '../data/services/matchScoring.js';
 
 export function useApplyToJob({ job, userId, onSuccess }) {
@@ -27,11 +27,7 @@ export function useApplyToJob({ job, userId, onSuccess }) {
         score = fallback.score;
         if (import.meta.env.DEV) console.log('Applicant match score breakdown (fallback):', fallback.breakdown);
       }
-      const { data, error: applyError } = await supabase.rpc('apply_to_job', {
-        p_job_id: job.id,
-        p_match_score: score,
-        p_applicant_details: applicantDetails,
-      });
+      const { data, error: applyError } = await applyToJob(job.id, score, applicantDetails);
       if (applyError) throw applyError;
       await onSuccess?.(data);
       return { success: true, data };

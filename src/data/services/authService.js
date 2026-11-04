@@ -7,6 +7,8 @@ export const registerUser = async (email, password, role, fullName, companyName)
       email: email,
       password: password,
       options: {
+        // Confirmation emails must return to the site the user signed up on, not the Supabase Site URL default.
+        emailRedirectTo: `${window.location.origin}/login`,
         data: {
           role: role,
           full_name: fullName,
@@ -78,6 +80,8 @@ export const logoutUser = async () => {
     return { success: false, message: error.message };
   }
 };
+export const getAuthUser = () => supabase.auth.getUser();
+
 export const getCurrentUser = async () => {
   try {
     const { data: { user }, error } = await supabase.auth.getUser();

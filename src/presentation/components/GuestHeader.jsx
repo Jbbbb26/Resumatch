@@ -1,8 +1,9 @@
 import { Link, useNavigate } from 'react-router-dom';
 import AppIcon from '../../../assets/Icon.png';
-import { rememberReturnPath } from '../../data/services/returnPath';
+import { useAuth } from '../../hooks/useAuth';
 
 export function GuestHeader({ isDarkMode = false, toggleTheme }) {
+  const { rememberReturnPath } = useAuth();
   const navigate = useNavigate();
   const go = (path) => {
     rememberReturnPath(window.location.pathname);

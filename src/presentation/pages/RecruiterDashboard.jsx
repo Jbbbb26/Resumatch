@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getCurrentUser, logoutUser } from '../../data/services/authService';
-import { apiFetch } from '../../data/services/apiClient';
+import { useAuth } from '../../hooks/useAuth';
+import { useApplications } from '../../hooks/useApplications';
+import { useJobData } from '../../hooks/useJobData';
+import { useJobEditor } from '../../hooks/useJobEditor';
 import { candidateDisplay } from '../../data/services/candidateDisplay';
-import { supabase } from '../../../supabaseClient.js';
 import { TopHeader } from '../components/TopHeader';
 import { CompanyProfileModal } from '../components/CompanyProfileModal';
 import { ProfileModal } from '../components/ProfileModal';
@@ -14,27 +15,39 @@ import { PipelinePage } from './PipelinePage';
 import { FileUploadField } from '../components/FileUploadField';
 import { useJobAttachments } from '../../hooks/useJobAttachments';
 import { RichJobEditor } from '../components/RichJobEditor';
-import { jobTextOnly } from '../../data/services/jobText';
 import { MatchAnalysis } from '../components/MatchAnalysis';
-import { EXPERIENCE_LEVELS, JOB_CATEGORIES } from '../../data/jobOptions';
+import { EXPERIENCE_LEVELS, JOB_CATEGORIES, JOB_TEXT_LIMITS } from '../../data/jobOptions';
+import { compareByRanking, rankingScore } from '../../data/pipelineStages';
+
+// Older applications were saved before the application snapshot existed.
+// For those, show the candidate's current profile instead.
+const profileApplicationDetails = (app) => {
+  const raw = app?.candidate_profiles;
+  const profile = (Array.isArray(raw) ? raw[0] : raw) || null;
+  if (!profile) return null;
+  const resume = profile.resume_data && typeof profile.resume_data === 'object' ? profile.resume_data : {};
+  const list = (value, fallback) => (Array.isArray(value) && value.length ? value : (Array.isArray(fallback) ? fallback : []));
+  return {
+    fullName: [profile.firstName, profile.lastName].filter(Boolean).join(' ').trim(),
+    email: profile.email,
+    phone: profile.phone,
+    location: profile.location,
+    summary: resume.summary,
+    education: list(profile.education, resume.education),
+    qualifications: list(profile.qualifications, resume.qualifications),
+    skills: list(profile.skills, resume.skills),
+    languages: list(profile.languages, resume.languages),
+  };
+};
 
 const emptyJobForm = {
   title: '', location: '', work_type: 'Remote', employment_type: 'Full-time', description: '', requirements: '',
   experience_level: '', job_category: '', salary_min: '', salary_max: '',
 };
 
-const JOB_TEXT_LIMITS = {
-  description: 5000,
-  requirements: 3000,
-};
 
 const formatPostedDate = (createdAt) => `Posted ${new Date(createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`;
 
-const APPLICATION_SELECT = `
-  id, match_score, status, applied_at, job_id, candidate_id,
-  job_postings!inner(title, recruiter_id),
-  candidate_profiles(firstName, lastName, email)
-`;
 
 function Badge({ children, positive = false, isDarkMode }) {
   return (
@@ -213,6 +226,8 @@ function JobFormModal({ mode, form, setForm, jobId, recruiterId, onClose, onSubm
 }
 
 function ReviewApplicationsModal({ job, onClose, isDarkMode }) {
+  const { listJobApplicants } = useApplications();
+  const { listMatchAnalysesForJob } = useJobData();
   const [applications, setApplications] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
@@ -226,26 +241,18 @@ function ReviewApplicationsModal({ job, onClose, isDarkMode }) {
     const load = async () => {
       setIsLoading(true);
       setError('');
-      const { data, error: queryError } = await supabase
-        .from('applications')
-        .select('id, match_score, status, applied_at, candidate_id, applicant_details, candidate_profiles(firstName, lastName, email)')
-        .eq('job_id', job.id)
-        .order('match_score', { ascending: false });
+      const { data, error: queryError } = await listJobApplicants(job.id);
       if (cancelled) return;
       if (queryError) setError(queryError.message);
       else {
-        setApplications((data || []).filter((app) => app.status !== 'Withdrawn'));
+        setApplications((data || []).filter((app) => app.status !== 'Withdrawn').sort(compareByRanking));
         setWithdrawnCount((data || []).filter((app) => app.status === 'Withdrawn').length);
       }
       setIsLoading(false);
 
       const candidateIds = [...new Set((data || []).map((app) => app.candidate_id).filter(Boolean))];
       if (queryError || !candidateIds.length) return;
-      const { data: analyses, error: analysisError } = await supabase
-        .from('job_match_analysis')
-        .select('candidate_id, score, coverage, overall_similarity, requirements, computed_at')
-        .eq('job_id', job.id)
-        .in('candidate_id', candidateIds);
+      const { data: analyses, error: analysisError } = await listMatchAnalysesForJob(job.id, candidateIds);
       if (cancelled) return;
       if (analysisError) {
         console.error('Match analysis load error:', analysisError.message);
@@ -293,9 +300,11 @@ function ReviewApplicationsModal({ job, onClose, isDarkMode }) {
               <ul className="flex flex-col gap-3">
                 {applications.map((app) => {
                   const person = candidateDisplay(app);
-                  const score = app.match_score ? Math.round(app.match_score) : 0;
+                  const score = Math.round(rankingScore(app));
                   const analysis = analysisByCandidate[app.candidate_id] || null;
-                  const canExpand = Boolean(app.applicant_details || analysis);
+                  const scoreChanged = Boolean(analysis) && analysis.score !== score;
+                  const details = app.applicant_details || profileApplicationDetails(app);
+                  const detailsFromProfile = !app.applicant_details && Boolean(details);
                   return (
                     <li key={app.id} className={`flex flex-wrap items-center justify-between gap-4 rounded-xl border p-4 ${isDarkMode ? 'border-white/5 bg-[#121b27]' : 'border-slate-200 bg-slate-50'}`}>
                       <div className="flex min-w-0 items-center gap-3">
@@ -318,8 +327,7 @@ function ReviewApplicationsModal({ job, onClose, isDarkMode }) {
                         >
                           View profile
                         </button>
-                        {canExpand && (
-                          <button
+                        <button
                             type="button"
                             aria-expanded={expandedApplicationId === app.id}
                             onClick={() => setExpandedApplicationId((current) => current === app.id ? null : app.id)}
@@ -327,23 +335,24 @@ function ReviewApplicationsModal({ job, onClose, isDarkMode }) {
                           >
                             {expandedApplicationId === app.id ? 'Hide application' : 'View application'}
                           </button>
-                        )}
                       </div>
                       {expandedApplicationId === app.id && (
                         <section className={`basis-full rounded-xl border p-4 ${isDarkMode ? 'border-white/10 bg-[#0a121c]' : 'border-slate-200 bg-white'}`} aria-label={`Match score breakdown for ${person.name}`}>
                           {analysis ? (
                             <>
+                              {scoreChanged && (
+                                <dl className={`mb-3 grid gap-2 rounded-lg border p-3 text-xs sm:grid-cols-2 ${isDarkMode ? 'border-white/10 text-slate-300' : 'border-slate-200 text-slate-700'}`}>
+                                  <div><dt className={muted}>Score when applied (used for ranking)</dt><dd className="text-base font-bold">{score}%</dd></div>
+                                  <div><dt className={muted}>Current score (today's resume and job text)</dt><dd className="text-base font-bold">{analysis.score}%</dd></div>
+                                </dl>
+                              )}
                               <MatchAnalysis
                                 job={{ id: `app-${app.id}`, matchAnalysis: analysis }}
                                 audience="recruiter"
-                                title={`Why ${score}%?`}
+                                title={scoreChanged ? `Why the current score is ${analysis.score}%` : `Why ${score}%?`}
+                                scoreLabel={scoreChanged ? 'current score' : ''}
                                 isDarkMode={isDarkMode}
                               />
-                              {analysis.score !== score && (
-                                <p className={`mt-3 text-xs ${muted}`}>
-                                  The saved score ({score}%) was calculated when they applied. Based on their current resume and this job's current text, it would be {analysis.score}%.
-                                </p>
-                              )}
                             </>
                           ) : (
                             <p className={`text-xs ${muted}`}>
@@ -352,21 +361,27 @@ function ReviewApplicationsModal({ job, onClose, isDarkMode }) {
                           )}
                         </section>
                       )}
-                      {expandedApplicationId === app.id && app.applicant_details && (
+                      {expandedApplicationId === app.id && !details && (
+                        <p className={`basis-full text-xs ${muted}`}>No application details were saved for this application, and the candidate's current profile could not be loaded. Use View profile to see what they have shared.</p>
+                      )}
+                      {expandedApplicationId === app.id && details && (
                         <section className={`basis-full rounded-xl border p-4 text-xs ${isDarkMode ? 'border-white/10 bg-[#0a121c] text-slate-300' : 'border-slate-200 bg-white text-slate-700'}`} aria-label={`Application details for ${person.name}`}>
+                          {detailsFromProfile && (
+                            <p className={`mb-3 ${muted}`}>This application was submitted before application details were saved, so this shows the candidate's current profile.</p>
+                          )}
                           <div className="grid gap-4 sm:grid-cols-2">
                             <div>
                               <h3 className="mb-2 font-bold">Personal profile</h3>
                               <dl className="space-y-1">
                                 {[
-                                  ['Name', app.applicant_details.fullName],
-                                  ['Email', app.applicant_details.email],
-                                  ['Phone', app.applicant_details.phone],
-                                  ['Location', app.applicant_details.location],
-                                  ['Profile link', app.applicant_details.profileUrl],
-                                  ['Summary', app.applicant_details.summary],
-                                  ['Years of experience', app.applicant_details.yearsExperience],
-                                  ['Cover note', app.applicant_details.coverNote],
+                                  ['Name', details.fullName],
+                                  ['Email', details.email],
+                                  ['Phone', details.phone],
+                                  ['Location', details.location],
+                                  ['Profile link', details.profileUrl],
+                                  ['Summary', details.summary],
+                                  ['Years of experience', details.yearsExperience],
+                                  ['Cover note', details.coverNote],
                                 ].filter(([, value]) => value).map(([label, value]) => (
                                   <div key={label}><dt className="inline font-semibold">{label}: </dt><dd className="inline whitespace-pre-line break-words">{String(value)}</dd></div>
                                 ))}
@@ -375,29 +390,29 @@ function ReviewApplicationsModal({ job, onClose, isDarkMode }) {
                             <div className="space-y-3">
                               <div>
                                 <h3 className="mb-1 font-bold">Education</h3>
-                                {(app.applicant_details.education || []).length ? (
+                                {(details.education || []).length ? (
                                   <ul className="space-y-1">
-                                    {app.applicant_details.education.map((item, index) => <li key={index}>{[item.degreeLevel, item.fieldOfStudy, item.school, item.yearGraduated].filter(Boolean).join(' · ')}</li>)}
+                                    {details.education.map((item, index) => <li key={index}>{[item.degreeLevel, item.fieldOfStudy, item.school, item.yearGraduated].filter(Boolean).join(' · ')}</li>)}
                                   </ul>
                                 ) : <p className={muted}>Not provided</p>}
                               </div>
                               <div>
                                 <h3 className="mb-1 font-bold">Qualifications</h3>
-                                {(app.applicant_details.qualifications || []).length ? (
+                                {(details.qualifications || []).length ? (
                                   <ul className="space-y-1">
-                                    {app.applicant_details.qualifications.map((item, index) => <li key={index}>{[item.name, item.organization, item.yearObtained].filter(Boolean).join(' · ')}</li>)}
+                                    {details.qualifications.map((item, index) => <li key={index}>{[item.name, item.organization, item.yearObtained].filter(Boolean).join(' · ')}</li>)}
                                   </ul>
                                 ) : <p className={muted}>Not provided</p>}
                               </div>
                               <div>
                                 <h3 className="mb-1 font-bold">Skills</h3>
-                                <p>{(app.applicant_details.skills || []).join(', ') || 'Not provided'}</p>
+                                <p>{(details.skills || []).join(', ') || 'Not provided'}</p>
                               </div>
                               <div>
                                 <h3 className="mb-1 font-bold">Languages</h3>
-                                {(app.applicant_details.languages || []).length ? (
+                                {(details.languages || []).length ? (
                                   <ul className="space-y-1">
-                                    {app.applicant_details.languages.map((item, index) => <li key={index}>{[item.language, item.proficiency].filter(Boolean).join(' · ')}</li>)}
+                                    {details.languages.map((item, index) => <li key={index}>{[item.language, item.proficiency].filter(Boolean).join(' · ')}</li>)}
                                   </ul>
                                 ) : <p className={muted}>Not provided</p>}
                               </div>
@@ -425,28 +440,6 @@ function ReviewApplicationsModal({ job, onClose, isDarkMode }) {
     </>
   );
 }
-
-const saveJob = async ({ mode, jobId, form }) => {
-  if (!form.title.trim()) return { success: false, message: 'Job title is required.' };
-  if (jobTextOnly(form.description).length > JOB_TEXT_LIMITS.description) {
-    return { success: false, message: `Description must be ${JOB_TEXT_LIMITS.description.toLocaleString()} characters or fewer.` };
-  }
-  if (jobTextOnly(form.requirements).length > JOB_TEXT_LIMITS.requirements) {
-    return { success: false, message: `Requirements must be ${JOB_TEXT_LIMITS.requirements.toLocaleString()} characters or fewer.` };
-  }
-  const salaryMin = form.salary_min === '' || form.salary_min == null ? null : Number(form.salary_min);
-  const salaryMax = form.salary_max === '' || form.salary_max == null ? null : Number(form.salary_max);
-  if ([salaryMin, salaryMax].some((value) => value !== null && (!Number.isInteger(value) || value < 0))) {
-    return { success: false, message: 'Salary must be a whole number of pesos per month.' };
-  }
-  if (salaryMin !== null && salaryMax !== null && salaryMax < salaryMin) {
-    return { success: false, message: 'Maximum salary must be at least the minimum salary.' };
-  }
-  return apiFetch(mode === 'edit' ? `/api/jobs/${jobId}` : '/api/post-job', {
-    method: mode === 'edit' ? 'PUT' : 'POST',
-    body: JSON.stringify(form),
-  });
-};
 
 const applicantCountFor = (applicants, jobId) => applicants.filter((a) => a.job_id === jobId).length;
 const topMatchFor = (applicants, jobId) => {
@@ -502,6 +495,7 @@ function JobListingsPreview({ jobs, applicants, onManage, isDarkMode }) {
 }
 
 function Home({ userId, isDarkMode, jobs, setJobs, applicants, onNavigate }) {
+  const { saveJob } = useJobEditor();
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [form, setForm] = useState(emptyJobForm);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -598,6 +592,7 @@ function Home({ userId, isDarkMode, jobs, setJobs, applicants, onNavigate }) {
 }
 
 function JobsPage({ user, isDarkMode, setJobs, applicants, setApplicants }) {
+  const { saveJob } = useJobEditor();
   const [editingJob, setEditingJob] = useState(null);
   const [form, setForm] = useState(emptyJobForm);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -757,6 +752,9 @@ function JobsPage({ user, isDarkMode, setJobs, applicants, setApplicants }) {
 
 export default function RecruiterDashboard() {
   const navigate = useNavigate();
+  const { getCurrentUser, logoutUser } = useAuth();
+  const { listRecruiterApplicants } = useApplications();
+  const { listRecruiterActiveJobs } = useJobData();
   const [isLoading, setIsLoading] = useState(true);
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [view, setView] = useState('home');
@@ -793,19 +791,10 @@ export default function RecruiterDashboard() {
   const loadDashboardData = async (userId) => {
     setIsLoading(true);
 
-    const { data: fetchedJobs } = await supabase
-      .from('job_postings')
-      .select('*')
-      .eq('recruiter_id', userId)
-      .eq('is_archived', false)
-      .order('created_at', { ascending: false });
+    const { data: fetchedJobs } = await listRecruiterActiveJobs(userId);
     if (fetchedJobs) setJobs(fetchedJobs);
 
-    const { data: fetchedApps, error: appsError } = await supabase
-      .from('applications')
-      .select(APPLICATION_SELECT)
-      .eq('job_postings.recruiter_id', userId)
-      .order('match_score', { ascending: false });
+    const { data: fetchedApps, error: appsError } = await listRecruiterApplicants(userId);
 
     if (appsError) console.error('Supabase Query Error:', appsError.message);
     else if (fetchedApps) setApplicants(fetchedApps.filter((app) => app.status !== 'Withdrawn'));

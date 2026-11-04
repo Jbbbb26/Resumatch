@@ -1,15 +1,16 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { supabase } from '../../../supabaseClient.js';
 import { jobTextOnly } from '../../data/services/jobText';
 import { TopHeader } from '../components/TopHeader';
 import { ProfileModal } from '../components/ProfileModal';
 import { ApplicationsModal } from '../components/ApplicationsModal';
-import { getCurrentUser, logoutUser } from '../../data/services/authService';
+import { useAuth } from '../../hooks/useAuth';
+import { useApplications } from '../../hooks/useApplications';
+import { useCompanyData } from '../../hooks/useCompanyData';
+import { useJobData } from '../../hooks/useJobData';
 import { ShareButton, companyShareUrl } from '../components/ShareButton';
 import { GuestHeader } from '../components/GuestHeader';
-import { fetchPublicCompany } from '../../data/services/publicData';
-import { galleryFrom, MAX_GALLERY_PHOTOS } from '../../data/services/companyMedia';
+import { galleryFrom, MAX_GALLERY_PHOTOS } from '../../data/companyMediaRules';
 
 const formatDate = (value) => value
   ? new Date(value).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
@@ -45,6 +46,10 @@ function Section({ id, title, children, isDarkMode }) {
 }
 
 export default function CompanyProfilePage() {
+  const { getCurrentUser, logoutUser } = useAuth();
+  const { countCandidateApplications, listCandidateApplications } = useApplications();
+  const { fetchPublicCompany } = useCompanyData();
+  const { listCompanyNames } = useJobData();
   const { companyId } = useParams();
   const navigate = useNavigate();
   const [isDarkMode, setIsDarkMode] = useState(false);
@@ -78,10 +83,7 @@ export default function CompanyProfilePage() {
         role: metadata.role,
       });
       if (metadata.role === 'job_seeker') {
-        const { count } = await supabase
-          .from('applications')
-          .select('id', { head: true, count: 'exact' })
-          .eq('candidate_id', authUser.id);
+        const { count } = await countCandidateApplications(authUser.id);
         if (mounted && count !== null) setApplicationCount(count);
       }
     };
@@ -105,17 +107,12 @@ export default function CompanyProfilePage() {
     setApplicationsLoading(true);
     setApplicationsError('');
     try {
-      const { data, error: applicationError } = await supabase
-        .from('applications')
-        .select('*, job_postings(id, title, recruiter_id)')
-        .eq('candidate_id', headerUser.id)
-        .order('applied_at', { ascending: false });
+      const { data, error: applicationError } = await listCandidateApplications(headerUser.id);
       if (applicationError) throw applicationError;
       const recruiterIds = [...new Set((data || []).map((app) => app.job_postings?.recruiter_id).filter(Boolean))];
       const companyNames = {};
       if (recruiterIds.length) {
-        const { data: employers, error: employerError } = await supabase
-          .from('employers').select('id, companyName').in('id', recruiterIds);
+        const { data: employers, error: employerError } = await listCompanyNames(recruiterIds);
         if (employerError) throw employerError;
         (employers || []).forEach((employer) => { companyNames[employer.id] = employer.companyName; });
       }

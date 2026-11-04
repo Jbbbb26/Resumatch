@@ -1,46 +1,18 @@
 import { useCallback, useEffect, useState } from 'react';
-import { supabase } from '../../supabaseClient.js';
+import {
+  createAttachmentSignedUrl,
+  deleteJobAttachmentRow,
+  getAuthUser,
+  insertJobAttachment,
+  listJobAttachments,
+  removeAttachmentFiles,
+  restoreJobAttachment,
+  uploadFileWithProgress,
+} from '../data/services/attachmentService';
 import { ATTACHMENT_RULES, sanitizeFilename, validateJobAttachment } from '../data/jobAttachments';
 
-const BUCKET = 'job-attachments';
 const SIGNED_URL_SECONDS = 60 * 60;
 const createId = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-
-const uploadFileWithProgress = async (path, file, onProgress) => {
-  const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-  if (sessionError) throw sessionError;
-  if (!session?.access_token) throw new Error('Your session has expired. Sign in again to upload attachments.');
-
-  const encodedPath = path.split('/').map(encodeURIComponent).join('/');
-  const url = `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/${BUCKET}/${encodedPath}`;
-  await new Promise((resolve, reject) => {
-    const request = new XMLHttpRequest();
-    request.open('POST', url);
-    request.setRequestHeader('Authorization', `Bearer ${session.access_token}`);
-    request.setRequestHeader('apikey', import.meta.env.VITE_SUPABASE_ANON_KEY);
-    request.setRequestHeader('Content-Type', file.type);
-    request.setRequestHeader('x-upsert', 'false');
-    request.upload.addEventListener('progress', (event) => {
-      if (event.lengthComputable) onProgress(Math.min(90, Math.round((event.loaded / event.total) * 90)));
-    });
-    request.addEventListener('load', () => {
-      if (request.status >= 200 && request.status < 300) resolve();
-      else {
-        let responseMessage = `Storage upload failed (${request.status}).`;
-        try {
-          const response = JSON.parse(request.responseText);
-          responseMessage = response.message || response.error || responseMessage;
-        } catch {
-          if (request.responseText) responseMessage = request.responseText;
-        }
-        reject(new Error(responseMessage));
-      }
-    });
-    request.addEventListener('error', () => reject(new Error('Network error while uploading this attachment.')));
-    request.addEventListener('abort', () => reject(new Error('Attachment upload was interrupted.')));
-    request.send(file);
-  });
-};
 
 export function useJobAttachments(jobId, recruiterId, enabled = true) {
   const [attachments, setAttachments] = useState([]);
@@ -55,11 +27,7 @@ export function useJobAttachments(jobId, recruiterId, enabled = true) {
       return;
     }
     setIsLoading(true);
-    const { data, error: queryError } = await supabase
-      .from('job_listing_attachments')
-      .select('id, job_id, file_name, file_path, file_size, mime_type, uploaded_by, created_at')
-      .eq('job_id', jobId)
-      .order('created_at', { ascending: true });
+    const { data, error: queryError } = await listJobAttachments(jobId);
     setIsLoading(false);
     if (queryError) {
       setError(queryError.message);
@@ -131,7 +99,7 @@ export function useJobAttachments(jobId, recruiterId, enabled = true) {
             : item));
         });
       } catch (uploadError) {
-        const { error: cleanupError } = await supabase.storage.from(BUCKET).remove([filePath]);
+        const { error: cleanupError } = await removeAttachmentFiles([filePath]);
         if (cleanupError) {
           console.error('Failed upload cleanup error:', cleanupError);
           setError(`Upload failed for ${entry.file.name}, and cleanup failed: ${cleanupError.message}`);
@@ -146,22 +114,18 @@ export function useJobAttachments(jobId, recruiterId, enabled = true) {
       setFiles((current) => current.map((item) => item.id === entry.id
         ? { ...item, status: 'uploading', progress: 95 }
         : item));
-      const { data: authData } = await supabase.auth.getUser();
-      const { data: attachment, error: insertError } = await supabase
-        .from('job_listing_attachments')
-        .insert([{
-          job_id: targetJobId,
-          file_name: entry.file.name,
-          file_path: filePath,
-          file_size: entry.file.size,
-          mime_type: entry.file.type,
-          uploaded_by: authData.user?.id || recruiterId,
-        }])
-        .select('id, job_id, file_name, file_path, file_size, mime_type, uploaded_by, created_at')
-        .single();
+      const { data: authData } = await getAuthUser();
+      const { data: attachment, error: insertError } = await insertJobAttachment({
+        job_id: targetJobId,
+        file_name: entry.file.name,
+        file_path: filePath,
+        file_size: entry.file.size,
+        mime_type: entry.file.type,
+        uploaded_by: authData.user?.id || recruiterId,
+      });
 
       if (insertError) {
-        const { error: cleanupError } = await supabase.storage.from(BUCKET).remove([filePath]);
+        const { error: cleanupError } = await removeAttachmentFiles([filePath]);
         if (cleanupError) {
           console.error('Attachment cleanup failed:', cleanupError);
           setError(`Could not save ${entry.file.name}; file cleanup also failed: ${cleanupError.message}`);
@@ -188,19 +152,16 @@ export function useJobAttachments(jobId, recruiterId, enabled = true) {
     if (!attachment) return false;
     setError('');
 
-    const { error: rowError } = await supabase
-      .from('job_listing_attachments')
-      .delete()
-      .eq('id', attachmentId);
+    const { error: rowError } = await deleteJobAttachmentRow(attachmentId);
     if (rowError) {
       setError(rowError.message);
       return false;
     }
 
     setAttachments((current) => current.filter((item) => item.id !== attachmentId));
-    const { error: storageError } = await supabase.storage.from(BUCKET).remove([attachment.file_path]);
+    const { error: storageError } = await removeAttachmentFiles([attachment.file_path]);
     if (storageError) {
-      const { error: restoreError } = await supabase.from('job_listing_attachments').insert([{
+      const { error: restoreError } = await restoreJobAttachment({
         id: attachment.id,
         job_id: attachment.job_id,
         file_name: attachment.file_name,
@@ -209,7 +170,7 @@ export function useJobAttachments(jobId, recruiterId, enabled = true) {
         mime_type: attachment.mime_type,
         uploaded_by: attachment.uploaded_by,
         created_at: attachment.created_at,
-      }]);
+      });
       if (restoreError) {
         console.error('Attachment metadata restore failed:', restoreError);
         setError(`The file could not be removed and its attachment record could not be restored: ${restoreError.message}`);
@@ -223,9 +184,7 @@ export function useJobAttachments(jobId, recruiterId, enabled = true) {
   }, [attachments]);
 
   const getDownloadUrl = useCallback(async (path) => {
-    const { data, error: signedUrlError } = await supabase.storage
-      .from(BUCKET)
-      .createSignedUrl(path, SIGNED_URL_SECONDS);
+    const { data, error: signedUrlError } = await createAttachmentSignedUrl(path, SIGNED_URL_SECONDS);
     if (signedUrlError) {
       setError(signedUrlError.message);
       return null;

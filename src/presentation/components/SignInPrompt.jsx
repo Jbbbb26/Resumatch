@@ -1,9 +1,10 @@
 import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { rememberReturnPath } from '../../data/services/returnPath';
+import { useAuth } from '../../hooks/useAuth';
 
 export function SignInPrompt({ title, message, onClose, isDarkMode = false }) {
+  const { rememberReturnPath } = useAuth();
   const navigate = useNavigate();
   const signInRef = useRef(null);
 

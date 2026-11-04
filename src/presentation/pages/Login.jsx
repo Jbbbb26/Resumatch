@@ -1,18 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import {
-  loginWithEmail,
-  loginWithGoogle,
-  logoutUser,
-  sendPasswordResetOtp,
-  verifyPasswordResetOtp,
-  updatePassword,
-  getCurrentUser,
-  updateUserMetadata,
-  createPublicProfile
-} from '../../data/services/authService';
+import { useAuth } from '../../hooks/useAuth';
 import AppIcon from '../../../assets/Icon.png';
-import { peekReturnPath, takeReturnPath } from '../../data/services/returnPath';
 
 const LOCK_STORAGE_KEY = 'resumatch_login_lock';
 const readLock = (email) => {
@@ -31,6 +20,10 @@ const formatCountdown = (ms) => {
 };
 
 export default function Login() {
+  const {
+    createPublicProfile, getCurrentUser, loginWithEmail, loginWithGoogle, logoutUser, peekReturnPath,
+    sendPasswordResetOtp, takeReturnPath, updatePassword, updateUserMetadata, verifyPasswordResetOtp,
+  } = useAuth();
   const [verifying, setVerifying] = useState(true);
 
   const [activeRole, setActiveRole] = useState('job_seeker');

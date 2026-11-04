@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { supabase } from '../../../supabaseClient.js';
+import { useAuth } from '../../hooks/useAuth';
+import { useProfileData } from '../../hooks/useProfileData';
 import { createApplicationForm } from '../../data/applicationForm';
 
 const hasText = (value) => typeof value === 'string' && value.trim().length > 0;
@@ -31,7 +32,6 @@ function buildApplicationSnapshot(profile, authUser, resumeFile) {
     resumeBucket: resumeFile ? 'resumes' : null,
     resumeFilePath: resumeFile?.name || null,
     resumeFileName: resumeFile?.name || null,
-    resumeFileUrl: resumeFile?.existingUrl || null,
   };
 }
 
@@ -41,7 +41,7 @@ function getMissingInformation(details) {
   if (!emailLooksValid(details.email)) missing.push('Valid email');
   if (!phoneLooksValid(details.phone)) missing.push('Valid phone number');
   if (!hasText(details.location)) missing.push('Location');
-  if (!details.resumeFilePath && !details.resumeFileUrl) missing.push('Uploaded resume');
+  if (!details.resumeFilePath) missing.push('Uploaded resume');
   if (!details.education?.some((entry) => hasText(String(entry.school || '')) &&
     (hasText(String(entry.degreeLevel || '')) || hasText(String(entry.fieldOfStudy || ''))))) {
     missing.push('Education');
@@ -59,6 +59,8 @@ function CheckIcon({ good }) {
 }
 
 export function ApplicationFormModal({ job, profile, isDarkMode, isSubmitting, submitError, onSubmit, onClose, onEditProfile }) {
+  const { getAuthUser } = useAuth();
+  const { getCandidateProfileFields, listResumeFiles } = useProfileData();
   const [snapshot, setSnapshot] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
@@ -76,34 +78,28 @@ export function ApplicationFormModal({ job, profile, isDarkMode, isSubmitting, s
     setLocalError('');
     setConsent(false);
     try {
-      const { data: auth, error: authError } = await supabase.auth.getUser();
+      const { data: auth, error: authError } = await getAuthUser();
       if (authError) throw authError;
       const authUser = auth?.user;
       if (!authUser) throw new Error('Sign in to continue your application.');
 
-      const { data: freshProfile, error: profileError } = await supabase
-        .from('candidate_profiles')
-        .select('*')
-        .eq('id', authUser.id)
-        .maybeSingle();
+      const { data: freshProfile, error: profileError } = await getCandidateProfileFields(authUser.id);
       if (profileError) throw profileError;
 
-      const { data: objects, error: storageError } = await supabase.storage
-        .from('resumes').list('', { search: `${authUser.id}-resume.` });
+      const { data: objects, error: storageError } = await listResumeFiles(`${authUser.id}-resume.`);
       if (storageError) throw new Error(`Could not check the uploaded resume: ${storageError.message}`);
       const uploaded = (objects || [])
         .filter((file) => file.name?.startsWith(`${authUser.id}-resume.`))
         .sort((a, b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0))[0];
-      const savedResumeUrl = freshProfile?.resumeFileUrl || freshProfile?.resume_file_url;
-      const resumeFile = uploaded || (hasText(savedResumeUrl) ? { existingUrl: savedResumeUrl } : null);
-      setSnapshot(buildApplicationSnapshot(freshProfile || profile || {}, authUser, resumeFile));
+      // Only the private file path is saved; links are signed when someone opens the resume.
+      setSnapshot(buildApplicationSnapshot(freshProfile || profile || {}, authUser, uploaded || null));
     } catch (error) {
       setLoadError(error?.message || 'Could not retrieve your saved candidate information.');
       setSnapshot(null);
     } finally {
       setIsLoading(false);
     }
-  }, [profile]);
+  }, [getAuthUser, getCandidateProfileFields, listResumeFiles, profile]);
 
   useEffect(() => { loadApplicant(); }, [loadApplicant]);
 
@@ -131,8 +127,8 @@ export function ApplicationFormModal({ job, profile, isDarkMode, isSubmitting, s
   const details = [
     { label: 'Personal information', complete: !!snapshot && !missing.some((item) => ['Full name', 'Valid email', 'Valid phone number', 'Location'].includes(item)),
       detail: snapshot ? `${snapshot.fullName || 'Name missing'} · ${snapshot.email || 'Email missing'}` : 'Not loaded' },
-    { label: 'Uploaded resume', complete: !!(snapshot?.resumeFilePath || snapshot?.resumeFileUrl),
-      detail: snapshot?.resumeFileName || (snapshot?.resumeFileUrl ? 'Saved resume link' : 'No resume found') },
+    { label: 'Uploaded resume', complete: !!snapshot?.resumeFilePath,
+      detail: snapshot?.resumeFileName || 'No resume found' },
     { label: 'Education', complete: !!snapshot && !missing.includes('Education'),
       detail: snapshot?.education?.length ? `${snapshot.education.length} education entry/entries` : 'No education found' },
     { label: 'Skills', complete: !!snapshot?.skills?.length,

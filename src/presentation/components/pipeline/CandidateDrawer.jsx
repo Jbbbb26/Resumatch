@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { supabase } from '../../../../supabaseClient.js';
+import { useStageHistory } from '../../../hooks/useStageHistory';
+import { useResumeFile } from '../../../hooks/useResumeFile';
 import { PIPELINE_STAGES, getPipelinePerson } from '../../../data/pipelineStages';
 
 const stageLabel = (stage) => PIPELINE_STAGES.find((item) => item.id === stage)?.label || stage || 'Unknown';
@@ -9,8 +10,7 @@ function formatTimestamp(value) {
 }
 
 export function CandidateDrawer({ application, isDarkMode, onClose, onSaveNotes, onEditInterview }) {
-  const [history, setHistory] = useState([]);
-  const [historyError, setHistoryError] = useState('');
+  const { history, error: historyError } = useStageHistory(application.id, application.stage_updated_at);
   const [notes, setNotes] = useState(application.notes || '');
   const [isSaving, setIsSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState('');
@@ -29,32 +29,10 @@ export function CandidateDrawer({ application, isDarkMode, onClose, onSaveNotes,
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [onClose]);
 
-  useEffect(() => {
-    let cancelled = false;
-    const loadHistory = async () => {
-      setHistoryError('');
-      const { data, error } = await supabase
-        .from('application_stage_history')
-        .select('id, from_stage, to_stage, changed_by, changed_at, note')
-        .eq('application_id', application.id)
-        .order('changed_at', { ascending: false });
-      if (cancelled) return;
-      if (error) setHistoryError(error.message);
-      else setHistory(data || []);
-    };
-    loadHistory();
-    return () => { cancelled = true; };
-  }, [application.id, application.stage_updated_at]);
-
   const submittedDetails = application.applicant_details && typeof application.applicant_details === 'object'
     ? application.applicant_details : null;
-  const resumeValue = submittedDetails?.resumeFilePath || submittedDetails?.resumeFileUrl
-    || person.candidate.resumeFileUrl || person.candidate.resume_file_url;
-  const resumeUrl = resumeValue
-    ? (/^https?:\/\//i.test(resumeValue)
-      ? resumeValue
-      : supabase.storage.from('resumes').getPublicUrl(resumeValue).data.publicUrl)
-    : null;
+  const submittedResume = submittedDetails?.resumeFilePath || submittedDetails?.resumeFileUrl || null;
+  const resume = useResumeFile(application.candidate_id || person.candidate.id, submittedResume);
   const matchBreakdown = application.match_breakdown || application.match_details;
 
   const handleSaveNotes = async () => {
@@ -93,18 +71,20 @@ export function CandidateDrawer({ application, isDarkMode, onClose, onSaveNotes,
               <div className="flex gap-2"><dt className={muted}>Match</dt><dd className={`${heading} font-bold`}>{Math.round(Number(application.match_score || 0))}%</dd></div>
               <div className="flex gap-2"><dt className={muted}>Applied</dt><dd className={heading}>{formatTimestamp(application.applied_at)}</dd></div>
             </dl>
-            {resumeUrl && (
-              <a href={resumeUrl} target="_blank" rel="noreferrer" className="mt-4 inline-flex rounded-xl bg-[#ea6036] px-4 py-2 text-sm font-bold text-white hover:bg-[#d8552e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#ea6036]">
-                View resume
-              </a>
+            {resume.status === 'ready' && (
+              <button type="button" onClick={resume.openResume} disabled={resume.isOpening} className="mt-4 inline-flex rounded-xl bg-[#ea6036] px-4 py-2 text-sm font-bold text-white hover:bg-[#d8552e] disabled:cursor-wait disabled:opacity-70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#ea6036]">
+                {resume.isOpening ? 'Opening resume…' : 'View resume'}
+              </button>
             )}
+            {resume.error && <p role="alert" className="mt-2 text-xs text-red-500">{resume.error}</p>}
             {matchBreakdown && (
               <div className={`mt-4 border-t pt-4 ${isDarkMode ? 'border-white/5' : 'border-slate-200'}`}>
                 <h4 className={`mb-2 text-xs font-bold uppercase tracking-wider ${muted}`}>Match breakdown</h4>
                 <pre className={`whitespace-pre-wrap break-words text-xs ${muted}`}>{typeof matchBreakdown === 'string' ? matchBreakdown : JSON.stringify(matchBreakdown, null, 2)}</pre>
               </div>
             )}
-            {!resumeUrl && <p className={`mt-3 text-xs ${muted}`}>No resume link is available on this profile.</p>}
+            {resume.status === 'loading' && <p className={`mt-3 text-xs ${muted}`}>Checking for a resume…</p>}
+            {resume.status === 'none' && <p className={`mt-3 text-xs ${muted}`}>This candidate has not uploaded a resume.</p>}
           </section>
 
           {submittedDetails && (

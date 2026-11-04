@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { supabase } from '../../../supabaseClient.js';
-import { getCurrentUser, logoutUser } from '../../data/services/authService';
+import { useAuth } from '../../hooks/useAuth';
+import { useProfileData } from '../../hooks/useProfileData';
+import { useApplications } from '../../hooks/useApplications';
+import { useJobData } from '../../hooks/useJobData';
 import { useJob } from '../../hooks/useJobs';
 import { useJobAttachments } from '../../hooks/useJobAttachments';
 import { useApplyToJob } from '../../hooks/useApplyToJob';
@@ -16,13 +18,16 @@ import { formatSalary } from '../../data/jobOptions';
 import { ShareButton, jobShareUrl } from '../components/ShareButton';
 import { GuestHeader } from '../components/GuestHeader';
 import { SignInPrompt } from '../components/SignInPrompt';
-import { fetchPublicJob } from '../../data/services/publicData';
 
 const isDarkDefault = () => !document.documentElement.classList.contains('light-mode');
 
 export default function JobDetailsPage() {
   const { jobId } = useParams();
   const navigate = useNavigate();
+  const { getCurrentUser, logoutUser } = useAuth();
+  const { getCandidateProfileFields } = useProfileData();
+  const { getApplicationForJob } = useApplications();
+  const { fetchPublicJob } = useJobData();
   const [user, setUser] = useState(null);
   const [viewer, setViewer] = useState('loading');
   const [headerUser, setHeaderUser] = useState(null);
@@ -91,7 +96,7 @@ export default function JobDetailsPage() {
           email: response.data.email,
           initials: (response.data.user_metadata?.full_name || 'Candidate').slice(0, 2).toUpperCase(),
         });
-        const { data, error } = await supabase.from('candidate_profiles').select('*').eq('id', response.data.id).maybeSingle();
+        const { data, error } = await getCandidateProfileFields(response.data.id);
         if (error) throw error;
         if (!cancelled) setProfile(data);
       } catch (loadError) {
@@ -125,11 +130,7 @@ export default function JobDetailsPage() {
     const loadActions = async () => {
       setApplicationLoading(true);
       setActionError('');
-      const applicationResult = await supabase.from('applications')
-        .select('id,status,status_updated_at,applied_at')
-        .eq('candidate_id', user.id)
-        .eq('job_id', job.id)
-        .maybeSingle();
+      const applicationResult = await getApplicationForJob(user.id, job.id);
       if (cancelled) return;
       if (applicationResult.error) {
         setActionError(applicationResult.error.message || 'Could not load application status.');

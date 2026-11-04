@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { supabase } from '../../../supabaseClient.js';
-import { apiFetch } from '../../data/services/apiClient';
+import { useProfileData } from '../../hooks/useProfileData';
+import { WEB_ADDRESS_MESSAGE, normalizeWebAddress } from '../../data/webAddress';
 
 const MAX_RESUME_MB = 10;
 const isPdfFile = (file) => file && (file.type === 'application/pdf' || /\.pdf$/i.test(file.name || ''));
@@ -15,6 +15,10 @@ const toParseProblem = (result) => ({
 });
 
 export const ProfileModal = ({ user, onClose, isDarkMode = true, isRecruiterView = false }) => {
+  const {
+    downloadResume, getCandidateProfileFields, listResumeFiles,
+    parseResume, removeResumeFiles, updateCandidateProfile, uploadResume,
+  } = useProfileData();
   const [activeTab, setActiveTab] = useState('experience');
   const [isEditable, setIsEditable] = useState(false);
   const [resumeData, setResumeData] = useState(null);
@@ -42,31 +46,30 @@ export const ProfileModal = ({ user, onClose, isDarkMode = true, isRecruiterView
   const [isSavingData, setIsSavingData] = useState(false);
 
   const [isPreviewMode, setIsPreviewMode] = useState(isRecruiterView);
+  const linkErrors = Object.fromEntries(Object.entries(links || {})
+    .filter(([, value]) => normalizeWebAddress(value) === null)
+    .map(([key]) => [key, WEB_ADDRESS_MESSAGE]));
+  const hasLinkErrors = Object.keys(linkErrors).length > 0;
+  const cleanLinks = () => Object.fromEntries(Object.entries(links || {})
+    .map(([key, value]) => [key, normalizeWebAddress(value) || '']));
 
   useEffect(() => {
     const fetchExistingResume = async () => {
       if (!user?.id) return;
-      const { data, error } = await supabase.storage.from('resumes').list('', {
-        search: user.id
-      });
+      const { data, error } = await listResumeFiles(user.id);
       if (data && data.length > 0) {
         const latestFile = data.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
         setResumeData({
           name: latestFile.name,
           size: (latestFile.metadata.size / (1024 * 1024)).toFixed(2) + ' MB',
           status: 'Uploaded successfully',
-          url: supabase.storage.from('resumes').getPublicUrl(latestFile.name).data.publicUrl
         });
       }
     };
 
     const fetchSavedResumeData = async () => {
       if (!user?.id) return;
-      const { data, error } = await supabase
-        .from('candidate_profiles')
-        .select('resume_data, phone, location')
-        .eq('id', user.id)
-        .single();
+      const { data, error } = await getCandidateProfileFields(user.id, 'resume_data, phone, location', { single: true });
 
       if (error) {
         console.error("Supabase Fetch Error:", error.message);
@@ -89,7 +92,7 @@ export const ProfileModal = ({ user, onClose, isDarkMode = true, isRecruiterView
   }, [user]);
 
   useEffect(() => {
-    if (!isEditingData) return;
+    if (!isEditingData || hasLinkErrors) return;
     const autoSaveTimer = setTimeout(async () => {
       setIsSavingData(true);
       const updatedResumeData = {
@@ -98,19 +101,16 @@ export const ProfileModal = ({ user, onClose, isDarkMode = true, isRecruiterView
         skills: skills,
         links: links
       };
-      const { error } = await supabase
-        .from('candidate_profiles')
-        .update({
-          resume_data: updatedResumeData,
-          phone: phone,
-          location: location
-        })
-        .eq('id', user.id);
+      const { error } = await updateCandidateProfile(user.id, {
+        resume_data: updatedResumeData,
+        phone: phone,
+        location: location
+      });
       if (error) console.error("Error auto-saving data:", error.message);
       setIsSavingData(false);
     }, 1500);
     return () => clearTimeout(autoSaveTimer);
-  }, [experiences, education, skills, links, phone, location, isEditingData, user?.id]);
+  }, [experiences, education, skills, links, phone, location, isEditingData, hasLinkErrors, user?.id]);
 
   const handleFileSelect = (event) => {
     const file = event.target.files[0];
@@ -160,9 +160,7 @@ export const ProfileModal = ({ user, onClose, isDarkMode = true, isRecruiterView
 
     const fileName = `${user.id}-resume.pdf`;
 
-    const { data, error: uploadError } = await supabase.storage
-      .from('resumes')
-      .upload(fileName, file, { upsert: true });
+    const { data, error: uploadError } = await uploadResume(fileName, file);
 
     if (uploadError) {
       console.error("Supabase Upload Error:", uploadError);
@@ -181,7 +179,6 @@ export const ProfileModal = ({ user, onClose, isDarkMode = true, isRecruiterView
       name: fileName,
       size: (file.size / (1024 * 1024)).toFixed(2) + ' MB',
       status: 'Resume updated successfully',
-      url: supabase.storage.from('resumes').getPublicUrl(fileName).data.publicUrl
     });
 
     setIsUploading(false);
@@ -194,10 +191,7 @@ export const ProfileModal = ({ user, onClose, isDarkMode = true, isRecruiterView
     setParseProblem(null);
     setResumeError('');
     try {
-      const result = await apiFetch('/api/parse-resume', {
-        method: 'POST',
-        body: JSON.stringify({ userId: user.id, fileName })
-      });
+      const result = await parseResume(user.id, fileName);
       if (result?.success && result.data) {
         setExperiences(result.data.experience || []);
         setSkills(result.data.skills || []);
@@ -219,7 +213,7 @@ export const ProfileModal = ({ user, onClose, isDarkMode = true, isRecruiterView
     setIsDownloading(true);
     setResumeError('');
     try {
-      const { data: blob, error } = await supabase.storage.from('resumes').download(resumeData.name);
+      const { data: blob, error } = await downloadResume(resumeData.name);
       if (error || !blob) throw new Error(error?.message || 'File not found');
       const person = (user?.name || '').trim().replace(/[\\/:*?"<>|]+/g, '').replace(/\s+/g, ' ');
       const extension = (resumeData.name.split('.').pop() || 'pdf').toLowerCase();
@@ -242,7 +236,7 @@ export const ProfileModal = ({ user, onClose, isDarkMode = true, isRecruiterView
     setIsDeleting(true);
     setResumeError('');
 
-    const { data: files, error: listError } = await supabase.storage.from('resumes').list('', { search: user.id });
+    const { data: files, error: listError } = await listResumeFiles(user.id);
     if (listError) {
       setResumeError(`Could not delete resume: ${listError.message}`);
       setIsDeleting(false);
@@ -251,7 +245,7 @@ export const ProfileModal = ({ user, onClose, isDarkMode = true, isRecruiterView
     }
     const names = (files || []).map((f) => f.name).filter((name) => name.startsWith(user.id));
     if (names.length) {
-      const { error: removeError } = await supabase.storage.from('resumes').remove(names);
+      const { error: removeError } = await removeResumeFiles(names);
       if (removeError) {
         setResumeError(`Could not delete resume: ${removeError.message}`);
         setIsDeleting(false);
@@ -260,17 +254,14 @@ export const ProfileModal = ({ user, onClose, isDarkMode = true, isRecruiterView
       }
     }
 
-    const { error: updateError } = await supabase
-      .from('candidate_profiles')
-      .update({
-        resume_data: { experience: [], education: [], skills: [], links },
-        skills: null,
-        experience: null,
-        resume_embedding: null,
-        resume_status: null,
-        last_synced: null,
-      })
-      .eq('id', user.id);
+    const { error: updateError } = await updateCandidateProfile(user.id, {
+      resume_data: { experience: [], education: [], skills: [], links },
+      skills: null,
+      experience: null,
+      resume_embedding: null,
+      resume_status: null,
+      last_synced: null,
+    });
     if (updateError) {
       setResumeError(`File removed, but profile could not be cleared: ${updateError.message}`);
     }
@@ -285,21 +276,22 @@ export const ProfileModal = ({ user, onClose, isDarkMode = true, isRecruiterView
   };
 
   const handleFinalSaveAndClose = async () => {
+    if (hasLinkErrors) {
+      setActiveTab('links');
+      return;
+    }
     setIsSavingData(true);
     const updatedResumeData = {
       experience: experiences,
       education: education,
       skills: skills,
-      links: links
+      links: cleanLinks()
     };
-    await supabase
-      .from('candidate_profiles')
-      .update({
-        resume_data: updatedResumeData,
-        phone: phone,
-        location: location
-      })
-      .eq('id', user.id);
+    await updateCandidateProfile(user.id, {
+      resume_data: updatedResumeData,
+      phone: phone,
+      location: location
+    });
     setIsSavingData(false);
     setIsEditingData(false);
     setIsEditable(false);
@@ -372,13 +364,13 @@ export const ProfileModal = ({ user, onClose, isDarkMode = true, isRecruiterView
                         className={`bg-transparent border-none focus:outline-none w-28 text-xs ${isDarkMode ? 'text-slate-200 placeholder:text-slate-600' : 'text-slate-900 placeholder:text-slate-400'}`}
                       />
                     ) : (
-                      <span>{location || "Add Location"}</span>
+                      <span>{location || (isPreviewMode ? "Not provided" : "Add Location")}</span>
                     )}
                   </div>
 
                   <div className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border transition-colors ${isDarkMode ? 'bg-[#0a121c] border-white/5 text-slate-200' : 'bg-white border-slate-200 text-slate-700'}`}>
                     <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>
-                    <span>{user?.email || "email@example.com"}</span>
+                    <span>{user?.email || "Not provided"}</span>
                   </div>
 
                   <div className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border transition-colors ${isDarkMode ? 'bg-[#0a121c] border-white/5 text-slate-200' : 'bg-white border-slate-200 text-slate-700'} ${isEditable && !isPreviewMode ? 'border-white/20 focus-within:border-[#ea6036]' : ''}`}>
@@ -392,7 +384,7 @@ export const ProfileModal = ({ user, onClose, isDarkMode = true, isRecruiterView
                         className={`bg-transparent border-none focus:outline-none w-32 text-xs ${isDarkMode ? 'text-slate-200 placeholder:text-slate-600' : 'text-slate-900 placeholder:text-slate-400'}`}
                       />
                     ) : (
-                      <span>{phone || "Add Phone Number"}</span>
+                      <span>{phone || (isPreviewMode ? "Not provided" : "Add Phone Number")}</span>
                     )}
                   </div>
                 </div>
@@ -455,7 +447,9 @@ export const ProfileModal = ({ user, onClose, isDarkMode = true, isRecruiterView
                   <svg className="w-4 h-4 text-[#ea6036]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
                   Resume / CV Master Source
                 </h2>
-                <p className={`text-[11px] mt-0.5 transition-colors ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Upload a PDF. ResuMatch reads it with AI to fill in your experience, education and skills.</p>
+                {!isPreviewMode && (
+                  <p className={`text-[11px] mt-0.5 transition-colors ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Upload a PDF. ResuMatch reads it with AI to fill in your experience, education and skills.</p>
+                )}
               </div>
             </div>
             <div className={`rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 transition-colors ${isDarkMode ? 'bg-[#0a121c] border border-white/5' : 'bg-white border border-slate-200'}`}>
@@ -667,7 +661,7 @@ export const ProfileModal = ({ user, onClose, isDarkMode = true, isRecruiterView
                         <div className={`py-12 flex flex-col items-center justify-center text-center transition-colors ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
                           <svg className="w-12 h-12 mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10z"></path></svg>
                           <p className={`text-sm font-semibold mb-1 ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>No experience data found</p>
-                          <p className="text-xs">Upload your resume to automatically extract your work history.</p>
+                          {!isPreviewMode && <p className="text-xs">Upload your resume to automatically extract your work history.</p>}
                         </div>
                       )}
                     </div>
@@ -712,7 +706,7 @@ export const ProfileModal = ({ user, onClose, isDarkMode = true, isRecruiterView
                         <div className={`py-12 flex flex-col items-center justify-center text-center transition-colors ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
                           <svg className="w-12 h-12 mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M12 14l9-5-9-5-9 5 9 5z"></path><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M12 14l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14z"></path></svg>
                           <p className={`text-sm font-semibold mb-1 ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>No education data found</p>
-                          <p className="text-xs">Upload your resume to automatically extract your education.</p>
+                          {!isPreviewMode && <p className="text-xs">Upload your resume to automatically extract your education.</p>}
                         </div>
                       )}
                     </div>
@@ -740,7 +734,7 @@ export const ProfileModal = ({ user, onClose, isDarkMode = true, isRecruiterView
                             <div className={`py-12 flex flex-col items-center justify-center text-center w-full transition-colors ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
                               <svg className="w-12 h-12 mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"></path></svg>
                               <p className={`text-sm font-semibold mb-1 ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>No skills found</p>
-                              <p className="text-xs">Upload your resume to automatically extract your skills.</p>
+                              {!isPreviewMode && <p className="text-xs">Upload your resume to automatically extract your skills.</p>}
                             </div>
                           )}
                         </div>
@@ -758,19 +752,23 @@ export const ProfileModal = ({ user, onClose, isDarkMode = true, isRecruiterView
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                           <div className="space-y-2">
                             <label className={`text-xs font-semibold transition-colors ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Personal Portfolio / Website</label>
-                            <input type="url" value={links.portfolio || ''} onChange={e => handleLinkChange('portfolio', e.target.value)} placeholder="https://..." className={`w-full border rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[#ea6036] transition-colors ${isDarkMode ? 'bg-[#0a121c] border-white/10 text-white' : 'bg-white border-slate-300 text-slate-900'}`} />
+                            <input type="url" value={links.portfolio || ''} onChange={e => handleLinkChange('portfolio', e.target.value)} placeholder="https://..." aria-invalid={Boolean(linkErrors.portfolio)} aria-describedby={linkErrors.portfolio ? 'link-portfolio-error' : undefined} className={`w-full border rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[#ea6036] transition-colors ${isDarkMode ? 'bg-[#0a121c] border-white/10 text-white' : 'bg-white border-slate-300 text-slate-900'} ${linkErrors.portfolio ? '!border-red-500' : ''}`} />
+                            {linkErrors.portfolio && <p id="link-portfolio-error" role="alert" className="text-xs text-red-500">{linkErrors.portfolio}</p>}
                           </div>
                           <div className="space-y-2">
                             <label className={`text-xs font-semibold transition-colors ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>LinkedIn Profile</label>
-                            <input type="url" value={links.linkedin || ''} onChange={e => handleLinkChange('linkedin', e.target.value)} placeholder="https://linkedin.com/in/..." className={`w-full border rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[#ea6036] transition-colors ${isDarkMode ? 'bg-[#0a121c] border-white/10 text-white' : 'bg-white border-slate-300 text-slate-900'}`} />
+                            <input type="url" value={links.linkedin || ''} onChange={e => handleLinkChange('linkedin', e.target.value)} placeholder="https://linkedin.com/in/..." aria-invalid={Boolean(linkErrors.linkedin)} aria-describedby={linkErrors.linkedin ? 'link-linkedin-error' : undefined} className={`w-full border rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[#ea6036] transition-colors ${isDarkMode ? 'bg-[#0a121c] border-white/10 text-white' : 'bg-white border-slate-300 text-slate-900'} ${linkErrors.linkedin ? '!border-red-500' : ''}`} />
+                            {linkErrors.linkedin && <p id="link-linkedin-error" role="alert" className="text-xs text-red-500">{linkErrors.linkedin}</p>}
                           </div>
                           <div className="space-y-2">
                             <label className={`text-xs font-semibold transition-colors ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Facebook Profile</label>
-                            <input type="url" value={links.facebook || ''} onChange={e => handleLinkChange('facebook', e.target.value)} placeholder="https://facebook.com/..." className={`w-full border rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[#ea6036] transition-colors ${isDarkMode ? 'bg-[#0a121c] border-white/10 text-white' : 'bg-white border-slate-300 text-slate-900'}`} />
+                            <input type="url" value={links.facebook || ''} onChange={e => handleLinkChange('facebook', e.target.value)} placeholder="https://facebook.com/..." aria-invalid={Boolean(linkErrors.facebook)} aria-describedby={linkErrors.facebook ? 'link-facebook-error' : undefined} className={`w-full border rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[#ea6036] transition-colors ${isDarkMode ? 'bg-[#0a121c] border-white/10 text-white' : 'bg-white border-slate-300 text-slate-900'} ${linkErrors.facebook ? '!border-red-500' : ''}`} />
+                            {linkErrors.facebook && <p id="link-facebook-error" role="alert" className="text-xs text-red-500">{linkErrors.facebook}</p>}
                           </div>
                           <div className="space-y-2">
                             <label className={`text-xs font-semibold transition-colors ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>GitHub</label>
-                            <input type="url" value={links.github || ''} onChange={e => handleLinkChange('github', e.target.value)} placeholder="https://github.com/..." className={`w-full border rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[#ea6036] transition-colors ${isDarkMode ? 'bg-[#0a121c] border-white/10 text-white' : 'bg-white border-slate-300 text-slate-900'}`} />
+                            <input type="url" value={links.github || ''} onChange={e => handleLinkChange('github', e.target.value)} placeholder="https://github.com/..." aria-invalid={Boolean(linkErrors.github)} aria-describedby={linkErrors.github ? 'link-github-error' : undefined} className={`w-full border rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[#ea6036] transition-colors ${isDarkMode ? 'bg-[#0a121c] border-white/10 text-white' : 'bg-white border-slate-300 text-slate-900'} ${linkErrors.github ? '!border-red-500' : ''}`} />
+                            {linkErrors.github && <p id="link-github-error" role="alert" className="text-xs text-red-500">{linkErrors.github}</p>}
                           </div>
                         </div>
                       ) : (

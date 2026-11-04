@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { apiFetch } from '../data/services/apiClient';
+import { listRecruiterJobs, patchRecruiterJob } from '../data/services/jobService';
 
 export const JOB_STATUS_FILTERS = [
   { value: 'open', label: 'Active' },
@@ -21,7 +21,7 @@ export function useJobListings({ setDashboardJobs }) {
     setIsLoading(true);
     setError('');
     try {
-      const result = await apiFetch(`/api/jobs?status=${statusFilter}`);
+      const result = await listRecruiterJobs(statusFilter);
       if (requestSequence !== loadSequence.current) return;
       if (!result.success) {
         setError(result.message || 'Unable to load job listings.');
@@ -56,10 +56,7 @@ export function useJobListings({ setDashboardJobs }) {
   const patchJob = useCallback(async (jobId, path, body) => {
     setError('');
     try {
-      const result = await apiFetch(`/api/jobs/${jobId}/${path}`, {
-        method: 'PATCH',
-        ...(body ? { body: JSON.stringify(body) } : {}),
-      });
+      const result = await patchRecruiterJob(jobId, path, body);
       if (!result.success) {
         setError(result.message || 'Unable to update this listing.');
         return null;
@@ -74,10 +71,12 @@ export function useJobListings({ setDashboardJobs }) {
   const archiveJob = useCallback(async (jobId) => {
     const updated = await patchJob(jobId, 'archive');
     if (!updated) return false;
-    setJobs((current) => current.filter((job) => job.id !== jobId));
+    setJobs((current) => statusFilter === 'all'
+      ? current.map((job) => (job.id === jobId ? updated : job))
+      : current.filter((job) => job.id !== jobId));
     updateDashboardJob(updated);
     return true;
-  }, [patchJob, updateDashboardJob]);
+  }, [patchJob, statusFilter, updateDashboardJob]);
 
   const restoreJob = useCallback(async (jobId) => {
     const updated = await patchJob(jobId, 'restore');

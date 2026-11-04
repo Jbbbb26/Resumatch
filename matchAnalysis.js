@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { MATCH_SCORE_DEFAULTS, overallCreditFor } from './src/data/matchExplanation.js';
 
 export const EMBEDDING_MODEL = 'gemini-embedding-2';
 const ANALYSIS_VERSION = 1;
@@ -12,11 +13,11 @@ export const MATCH_SETTINGS = Object.freeze({
   floor: num('MATCH_SIM_FLOOR', 0.68),
   ceiling: num('MATCH_SIM_CEILING', 0.85),
   metAt: num('MATCH_SIM_MET', 0.8),
-  partialAt: num('MATCH_SIM_PARTIAL', 0.73),
-  overallFloor: num('MATCH_OVERALL_FLOOR', 0.764),
-  overallCeiling: num('MATCH_OVERALL_CEILING', 0.9),
-  coverageWeight: 0.85,
-  overallWeight: 0.15,
+  partialAt: num('MATCH_SIM_PARTIAL', MATCH_SCORE_DEFAULTS.partialAt),
+  overallFloor: num('MATCH_OVERALL_FLOOR', MATCH_SCORE_DEFAULTS.overallFloor),
+  overallCeiling: num('MATCH_OVERALL_CEILING', MATCH_SCORE_DEFAULTS.overallCeiling),
+  coverageWeight: MATCH_SCORE_DEFAULTS.coverageWeight,
+  overallWeight: MATCH_SCORE_DEFAULTS.overallWeight,
   requirementWeight: 1,
   responsibilityWeight: 0.5,
   maxRequirements: 15,
@@ -221,6 +222,11 @@ const toResult = (row) => ({
   score: row.score,
   coverage: row.coverage,
   overallSimilarity: row.overall_similarity,
+  overallCredit: overallCreditFor(row.overall_similarity, MATCH_SETTINGS.overallFloor, MATCH_SETTINGS.overallCeiling),
+  overallFloor: MATCH_SETTINGS.overallFloor,
+  overallCeiling: MATCH_SETTINGS.overallCeiling,
+  coverageWeight: MATCH_SETTINGS.coverageWeight,
+  overallWeight: MATCH_SETTINGS.overallWeight,
   requirements: row.requirements || [],
   computedAt: row.computed_at,
 });

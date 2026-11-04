@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { supabase } from '../../supabaseClient.js';
-
-const SAVED_JOB_SELECT = 'id,job_posting_id,created_at,job_postings(id,title,location,work_type,employment_type,status,hiring_status,is_archived,created_at)';
+import { getSavedJob, saveJob, unsaveJob } from '../data/services/savedJobService';
 
 export function useSavedJob({ jobId, userId, initialSaved, onChange }) {
   const [savedRecord, setSavedRecord] = useState(initialSaved || null);
@@ -18,12 +16,7 @@ export function useSavedJob({ jobId, userId, initialSaved, onChange }) {
     let cancelled = false;
     const load = async () => {
       setIsLoading(true);
-      const { data, error: queryError } = await supabase
-        .from('saved_jobs')
-        .select(SAVED_JOB_SELECT)
-        .eq('candidate_id', userId)
-        .eq('job_posting_id', jobId)
-        .maybeSingle();
+      const { data, error: queryError } = await getSavedJob(userId, jobId);
       if (cancelled) return;
       if (queryError) setError(queryError.message);
       else setSavedRecord(data);
@@ -37,11 +30,7 @@ export function useSavedJob({ jobId, userId, initialSaved, onChange }) {
     if (!jobId || !userId || isLoading) return false;
     setError('');
     if (savedRecord) {
-      const { error: deleteError } = await supabase
-        .from('saved_jobs')
-        .delete()
-        .eq('id', savedRecord.id)
-        .eq('candidate_id', userId);
+      const { error: deleteError } = await unsaveJob(savedRecord.id, userId);
       if (deleteError) {
         setError(deleteError.message);
         return false;
@@ -51,11 +40,7 @@ export function useSavedJob({ jobId, userId, initialSaved, onChange }) {
       return true;
     }
 
-    const { data, error: insertError } = await supabase
-      .from('saved_jobs')
-      .insert([{ candidate_id: userId, job_posting_id: jobId }])
-      .select(SAVED_JOB_SELECT)
-      .single();
+    const { data, error: insertError } = await saveJob(userId, jobId);
     if (insertError) {
       setError(insertError.message);
       return false;

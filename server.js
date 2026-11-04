@@ -162,7 +162,7 @@ app.get('/api/jobs', requireUser, requireRecruiter, async (req, res) => {
     if (status === 'open') query = query.eq('is_archived', false).eq('hiring_status', 'open');
     if (status === 'closed') query = query.eq('is_archived', false).eq('hiring_status', 'closed');
     if (status === 'archived') query = query.eq('is_archived', true);
-    if (status === 'all') query = query.eq('is_archived', false);
+    // 'all' returns every listing (open, closed and archived); each card shows its own status badge.
 
     const { data, error } = await query;
     if (error) throw new Error(`Database query failed: ${error.message}`);

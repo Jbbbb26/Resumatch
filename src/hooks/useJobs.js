@@ -1,21 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
-import { supabase } from '../../supabaseClient.js';
-import { apiFetch } from '../data/services/apiClient.js';
+import { fetchMatchAnalyses, getRecommendedJobs, listActiveJobs, listCompanyNames } from '../data/services/jobService';
+import { getCandidateProfileFields } from '../data/services/profileService';
 
-export async function fetchMatchAnalyses(jobIds) {
-  if (!jobIds.length) return { analyses: {}, error: '' };
-  const response = await apiFetch('/api/match-analysis', {
-    method: 'POST',
-    body: JSON.stringify({ jobIds }),
-  });
-  if (!response?.success) {
-    console.error('Match analysis failed:', response?.message);
-    return { analyses: {}, error: response?.message || 'Match analysis is unavailable right now.' };
-  }
-  return { analyses: response.data || {}, error: '' };
-}
-
-const JOB_SELECT = 'id,recruiter_id,title,location,work_type,employment_type,experience_level,job_category,salary_min,salary_max,description,requirements,created_at,status,hiring_status,is_archived';
+export { fetchMatchAnalyses };
 
 const isNursingPosition = (title = '') =>
   /\b(nurse|nursing)\b/i.test(title) &&
@@ -58,15 +45,7 @@ function getCandidateNursingEvidence(profile) {
 }
 
 async function fetchJobs(candidateId, jobId) {
-  let query = supabase
-    .from('job_postings')
-    .select(JOB_SELECT)
-    .eq('status', 'active')
-    .eq('is_archived', false)
-    .order('created_at', { ascending: false });
-
-  if (jobId) query = query.eq('id', jobId);
-  const { data: rows, error } = await query;
+  const { data: rows, error } = await listActiveJobs(jobId);
   if (error) throw error;
 
   let matchById = new Map();
@@ -75,15 +54,8 @@ async function fetchJobs(candidateId, jobId) {
   let analysisError = '';
   if (candidateId) {
     const [{ data: recommendations, error: matchError }, { data: profile, error: profileError }] = await Promise.all([
-      supabase.rpc('get_recommended_jobs', {
-        p_candidate_id: candidateId,
-        match_threshold: 0.4,
-        match_count: 10,
-      }),
-      supabase.from('candidate_profiles')
-        .select('skills,experience,resume_data')
-        .eq('id', candidateId)
-        .maybeSingle(),
+      getRecommendedJobs(candidateId),
+      getCandidateProfileFields(candidateId, 'skills,experience,resume_data'),
     ]);
     if (matchError) throw matchError;
     if (profileError) throw profileError;
@@ -100,7 +72,7 @@ async function fetchJobs(candidateId, jobId) {
 
   const recruiterIds = [...new Set((rows || []).map((job) => job.recruiter_id).filter(Boolean))];
   const companiesResult = recruiterIds.length
-    ? await supabase.from('employers').select('id,companyName').in('id', recruiterIds)
+    ? await listCompanyNames(recruiterIds)
     : { data: [], error: null };
   if (companiesResult.error) throw companiesResult.error;
   const companies = new Map((companiesResult.data || []).map((employer) => [employer.id, employer.companyName]));
@@ -122,6 +94,7 @@ async function fetchJobs(candidateId, jobId) {
       match: outOfField ? 0 : (unverified ? null : (matchAnalysis?.score ?? null)),
       matched_keywords: outOfField ? [] : (recommended?.matchedKeywords || null),
       qualification_mismatch: Boolean(outOfField),
+      missing_qualification: outOfField ? 'A nursing degree, license or clinical experience' : null,
     };
   });
 }

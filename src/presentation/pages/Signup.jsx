@@ -1,10 +1,10 @@
 import { useState , useEffect} from 'react';
 import { Link, useNavigate , useLocation} from 'react-router-dom';
-import { registerUser, loginWithGoogle } from '../../data/services/authService';
-import { takeReturnPath } from '../../data/services/returnPath';
+import { useAuth } from '../../hooks/useAuth';
 import AppIcon from '../../../assets/Icon.png';
 
 export default function Signup() {
+  const { loginWithGoogle, registerUser, takeReturnPath } = useAuth();
   const navigate = useNavigate();
 const location = useLocation();
   const [activeRole, setActiveRole] = useState(null);

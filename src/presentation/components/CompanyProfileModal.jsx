@@ -1,24 +1,17 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { supabase } from '../../../supabaseClient.js';
 import { ShareButton, companyShareUrl } from './ShareButton';
-import {
-  ALLOWED_IMAGE_TYPES, MAX_GALLERY_PHOTOS, addGalleryPhotos, galleryFrom,
-  removeCompanyLogo, removeGalleryPhoto, uploadCompanyLogo,
-} from '../../data/services/companyMedia';
+import { ALLOWED_IMAGE_TYPES, MAX_GALLERY_PHOTOS, galleryFrom } from '../../data/companyMediaRules';
+import { useCompanyData } from '../../hooks/useCompanyData';
 
-const validCompanyWebsite = (value) => {
-  if (!value || !value.trim()) return '';
-  const trimmed = value.trim();
-  const candidate = /^[a-z][a-z0-9+.-]*:/i.test(trimmed) ? trimmed : `https://${trimmed}`;
-  try {
-    const url = new URL(candidate);
-    return ['http:', 'https:'].includes(url.protocol) ? url.href : null;
-  } catch {
-    return null;
-  }
-};
+import { WEB_ADDRESS_MESSAGE, normalizeWebAddress } from '../../data/webAddress';
+
+const validCompanyWebsite = normalizeWebAddress;
 
 export const CompanyProfileModal = ({ user, onClose, isDarkMode = true }) => {
+  const {
+    addGalleryPhotos, getEmployerProfile, listOpenJobsForRecruiter, removeCompanyLogo,
+    removeGalleryPhoto, saveEmployerProfile, uploadCompanyLogo,
+  } = useCompanyData();
   const [activeTab, setActiveTab] = useState('about');
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -26,6 +19,7 @@ export const CompanyProfileModal = ({ user, onClose, isDarkMode = true }) => {
 
   const [isLoadingProfile, setIsLoadingProfile] = useState(true);
   const [profileError, setProfileError] = useState('');
+  const [websiteError, setWebsiteError] = useState('');
   const [profileSuccess, setProfileSuccess] = useState('');
   const [companyExists, setCompanyExists] = useState(false);
   const [companyData, setCompanyData] = useState({
@@ -45,11 +39,7 @@ export const CompanyProfileModal = ({ user, onClose, isDarkMode = true }) => {
       if (!user?.id) { if (active) setIsLoadingProfile(false); return; }
       setIsLoadingProfile(true);
       setProfileError('');
-      const { data, error } = await supabase
-        .from('employers')
-        .select('id, companyName, website, industry, size, location, description, logo_url, logo_path, gallery_photos')
-        .eq('id', user.id)
-        .maybeSingle();
+      const { data, error } = await getEmployerProfile(user.id);
       if (!active) return;
       if (error) {
         setProfileError(`Could not load company profile: ${error.message}`);
@@ -75,13 +65,7 @@ export const CompanyProfileModal = ({ user, onClose, isDarkMode = true }) => {
   useEffect(() => {
     const fetchJobs = async () => {
       if (!user?.id) return;
-      const { data } = await supabase
-        .from('job_postings')
-        .select('*')
-        .eq('recruiter_id', user.id)
-        .eq('is_archived', false)
-        .eq('hiring_status', 'open')
-        .order('created_at', { ascending: false });
+      const { data } = await listOpenJobsForRecruiter(user.id);
       if (data) setJobs(data);
     };
     fetchJobs();
@@ -95,9 +79,10 @@ export const CompanyProfileModal = ({ user, onClose, isDarkMode = true }) => {
     }
     const website = validCompanyWebsite(companyData.website);
     if (website === null) {
-      setProfileError('Enter a valid website URL (https://example.com).');
+      setWebsiteError(WEB_ADDRESS_MESSAGE);
       return;
     }
+    setWebsiteError('');
     const details = {
       companyName: companyData.companyName.trim(),
       website,
@@ -110,12 +95,7 @@ export const CompanyProfileModal = ({ user, onClose, isDarkMode = true }) => {
     setProfileError('');
     setProfileSuccess('');
     try {
-      const request = companyExists
-        ? supabase.from('employers').update(details).eq('id', user.id)
-        : supabase.from('employers').insert({ id: user.id, email: user.email, ...details });
-      const { data, error } = await request
-        .select('id, companyName, website, industry, size, location, description')
-        .single();
+      const { data, error } = await saveEmployerProfile(user, details, companyExists);
       if (error) throw error;
       setCompanyExists(true);
       setCompanyData({
@@ -176,6 +156,7 @@ export const CompanyProfileModal = ({ user, onClose, isDarkMode = true }) => {
 
   const updateField = (field, value) => {
     setCompanyData(prev => ({ ...prev, [field]: value }));
+    if (field === 'website') setWebsiteError('');
   };
 
   const inputClass = `w-full border rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[#ea6036] transition-colors ${isDarkMode ? 'bg-[#0a121c] border-white/10 text-white' : 'bg-white border-slate-300 text-slate-900'}`;
@@ -261,7 +242,11 @@ export const CompanyProfileModal = ({ user, onClose, isDarkMode = true }) => {
               {isEditing ? (
                 <div className="grid gap-6 sm:grid-cols-2">
                   <div><label className={labelClass}>Company Name</label><input value={companyData.companyName} onChange={e => updateField('companyName', e.target.value)} required className={inputClass} /></div>
-                  <div><label className={labelClass}>Website</label><input value={companyData.website} onChange={e => updateField('website', e.target.value)} placeholder="https://..." className={inputClass} /></div>
+                  <div>
+                    <label htmlFor="company-website" className={labelClass}>Website</label>
+                    <input id="company-website" value={companyData.website} onChange={e => updateField('website', e.target.value)} onBlur={() => setWebsiteError(validCompanyWebsite(companyData.website) === null ? WEB_ADDRESS_MESSAGE : '')} placeholder="https://example.com" aria-invalid={Boolean(websiteError)} aria-describedby={websiteError ? 'company-website-error' : undefined} className={`${inputClass} ${websiteError ? '!border-red-500' : ''}`} />
+                    {websiteError && <p id="company-website-error" role="alert" className="mt-1 text-xs text-red-500">{websiteError}</p>}
+                  </div>
                   <div><label className={labelClass}>Industry</label><input value={companyData.industry} onChange={e => updateField('industry', e.target.value)} className={inputClass} /></div>
                   <div><label className={labelClass}>Company Size</label><input value={companyData.size} onChange={e => updateField('size', e.target.value)} placeholder="e.g. 51-100" className={inputClass} /></div>
                   <div><label className={labelClass}>Primary Location</label><input value={companyData.location} onChange={e => updateField('location', e.target.value)} className={inputClass} /></div>

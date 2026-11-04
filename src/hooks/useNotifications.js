@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { supabase } from '../../supabaseClient.js';
+import { listNotifications, markAllNotificationsRead, markNotificationRead, subscribeToNewNotifications } from '../data/services/notificationService';
 
 const PAGE_SIZE = 20;
 
@@ -11,12 +11,7 @@ export function useNotifications(userId) {
   const load = useCallback(async () => {
     if (!userId) return;
     setIsLoading(true);
-    const { data, error: loadError } = await supabase
-      .from('notifications')
-      .select('id, type, title, body, job_id, application_id, read_at, created_at')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false })
-      .limit(PAGE_SIZE);
+    const { data, error: loadError } = await listNotifications(userId, PAGE_SIZE);
     if (loadError) {
       console.error('Notifications load error:', loadError.message);
       setError(loadError.message);
@@ -33,21 +28,15 @@ export function useNotifications(userId) {
       return undefined;
     }
     load();
-    const channel = supabase
-      .channel(`notifications-${userId}`)
-      .on('postgres_changes', {
-        event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${userId}`,
-      }, (payload) => {
-        setNotifications((current) => [payload.new, ...current.filter((item) => item.id !== payload.new.id)].slice(0, PAGE_SIZE));
-      })
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
+    return subscribeToNewNotifications(userId, (payload) => {
+      setNotifications((current) => [payload.new, ...current.filter((item) => item.id !== payload.new.id)].slice(0, PAGE_SIZE));
+    });
   }, [load, userId]);
 
   const markRead = useCallback(async (id) => {
     const readAt = new Date().toISOString();
     setNotifications((current) => current.map((item) => (item.id === id && !item.read_at ? { ...item, read_at: readAt } : item)));
-    const { error: updateError } = await supabase.from('notifications').update({ read_at: readAt }).eq('id', id).is('read_at', null);
+    const { error: updateError } = await markNotificationRead(id, readAt);
     if (updateError) console.error('Could not mark notification read:', updateError.message);
   }, []);
 
@@ -55,7 +44,7 @@ export function useNotifications(userId) {
     if (!userId) return;
     const readAt = new Date().toISOString();
     setNotifications((current) => current.map((item) => (item.read_at ? item : { ...item, read_at: readAt })));
-    const { error: updateError } = await supabase.from('notifications').update({ read_at: readAt }).eq('user_id', userId).is('read_at', null);
+    const { error: updateError } = await markAllNotificationsRead(userId, readAt);
     if (updateError) console.error('Could not mark notifications read:', updateError.message);
   }, [userId]);
 

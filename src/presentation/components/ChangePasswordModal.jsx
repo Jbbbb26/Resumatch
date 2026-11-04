@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { supabase } from '../../../supabaseClient.js';
-import { changePassword, hasPasswordLogin, isStrongPassword } from '../../data/services/authService';
+import { useAuth } from '../../hooks/useAuth';
 
 function PasswordField({ id, label, value, onChange, autoComplete, inputRef, isDarkMode, hint }) {
   const [visible, setVisible] = useState(false);
@@ -29,6 +28,7 @@ function PasswordField({ id, label, value, onChange, autoComplete, inputRef, isD
 }
 
 export function ChangePasswordModal({ isDarkMode, onClose }) {
+  const { changePassword, getCurrentUser, hasPasswordLogin, isStrongPassword } = useAuth();
   const [needsCurrent, setNeedsCurrent] = useState(true);
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
@@ -40,8 +40,8 @@ export function ChangePasswordModal({ isDarkMode, onClose }) {
 
   useEffect(() => {
     let active = true;
-    supabase.auth.getUser().then(({ data }) => {
-      if (active && data?.user) setNeedsCurrent(hasPasswordLogin(data.user));
+    getCurrentUser().then((result) => {
+      if (active && result.success && result.data) setNeedsCurrent(hasPasswordLogin(result.data));
     });
     firstFieldRef.current?.focus();
     return () => { active = false; };

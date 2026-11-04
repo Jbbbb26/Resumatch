@@ -39,3 +39,8 @@ export function formatSalary(job) {
   if (hasMax) return `Up to ${peso(max)} / month`;
   return '';
 }
+
+export const JOB_TEXT_LIMITS = {
+  description: 5000,
+  requirements: 3000,
+};
