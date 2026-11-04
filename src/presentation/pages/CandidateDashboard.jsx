@@ -711,10 +711,13 @@ export default function CandidateDashboard() {
     setJobView('all');
     const terms = [titleQuery.trim() && `"${titleQuery.trim()}"`, locationQuery.trim() && `in "${locationQuery.trim()}"`].filter(Boolean).join(' ');
     setSearchSummary(`${searchCount} ${searchCount === 1 ? 'job' : 'jobs'} found${terms ? ` for ${terms}` : ''} in All jobs.`);
-    requestAnimationFrame(() => {
-      resultsHeadingRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      resultsHeadingRef.current?.focus({ preventScroll: true });
-    });
+    // Wait for React to show the All jobs list, then move the user to its heading.
+    setTimeout(() => {
+      const heading = resultsHeadingRef.current;
+      if (!heading) return;
+      heading.focus({ preventScroll: true });
+      heading.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 50);
   };
 
   const sortedJobs = useMemo(
@@ -920,7 +923,7 @@ export default function CandidateDashboard() {
 
           <aside aria-label="Saved jobs" className="min-w-0">
             <div className="mb-4 flex min-h-8 items-center justify-between gap-3">
-              <h2 ref={resultsHeadingRef} tabIndex={-1} className={`text-xl font-serif outline-none ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>Saved jobs</h2>
+              <h2 className={`text-xl font-serif ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>Saved jobs</h2>
               <span className={`text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
                 {visibleSavedJobs.length} saved
               </span>
