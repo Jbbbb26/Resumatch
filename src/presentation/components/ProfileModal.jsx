@@ -14,14 +14,25 @@ const toParseProblem = (result) => ({
   retryable: result?.retryable ?? true,
 });
 
-export const ProfileModal = ({ user, onClose, isDarkMode = true, isRecruiterView = false }) => {
+// Last loaded profile per user, so reopening the profile shows data immediately
+// while a fresh copy loads in the background.
+const profileCache = new Map();
+const EMPTY_LINKS = { portfolio: '', linkedin: '', facebook: '', github: '' };
+
+export const ProfileModal = ({ user, onClose, isDarkMode = true, isRecruiterView = false, initialProfile = null }) => {
+  const cached = (user?.id && profileCache.get(user.id))
+    || (initialProfile && initialProfile.id === user?.id ? { fields: initialProfile } : null);
+  const cachedFields = cached?.fields || null;
+  const cachedResume = cachedFields?.resume_data || {};
   const {
     downloadResume, getCandidateProfileFields, listResumeFiles,
     parseResume, removeResumeFiles, updateCandidateProfile, uploadResume,
   } = useProfileData();
   const [activeTab, setActiveTab] = useState('experience');
   const [isEditable, setIsEditable] = useState(false);
-  const [resumeData, setResumeData] = useState(null);
+  const [resumeData, setResumeData] = useState(cached?.resumeFile || null);
+  const [isLoadingResume, setIsLoadingResume] = useState(!cached?.resumeFile);
+  const [isLoadingProfile, setIsLoadingProfile] = useState(!cachedFields);
 
   const [isUploading, setIsUploading] = useState(false);
   const [isParsing, setIsParsing] = useState(false);
@@ -35,13 +46,13 @@ export const ProfileModal = ({ user, onClose, isDarkMode = true, isRecruiterView
 
   const fileInputRef = useRef(null);
 
-  const [phone, setPhone] = useState('');
-  const [location, setLocation] = useState('');
+  const [phone, setPhone] = useState(cachedFields?.phone || '');
+  const [location, setLocation] = useState(cachedFields?.location || '');
 
-  const [experiences, setExperiences] = useState([]);
-  const [skills, setSkills] = useState([]);
-  const [education, setEducation] = useState([]);
-  const [links, setLinks] = useState({ portfolio: '', linkedin: '', facebook: '', github: '' });
+  const [experiences, setExperiences] = useState(cachedResume.experience || []);
+  const [skills, setSkills] = useState(cachedResume.skills || []);
+  const [education, setEducation] = useState(cachedResume.education || []);
+  const [links, setLinks] = useState(cachedResume.links || EMPTY_LINKS);
   const [isEditingData, setIsEditingData] = useState(false);
   const [isSavingData, setIsSavingData] = useState(false);
 
@@ -56,7 +67,7 @@ export const ProfileModal = ({ user, onClose, isDarkMode = true, isRecruiterView
   useEffect(() => {
     const fetchExistingResume = async () => {
       if (!user?.id) return;
-      const { data, error } = await listResumeFiles(user.id);
+      const { data } = await listResumeFiles(user.id);
       if (data && data.length > 0) {
         const latestFile = data.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
         setResumeData({
@@ -65,6 +76,7 @@ export const ProfileModal = ({ user, onClose, isDarkMode = true, isRecruiterView
           status: 'Uploaded successfully',
         });
       }
+      setIsLoadingResume(false);
     };
 
     const fetchSavedResumeData = async () => {
@@ -83,13 +95,23 @@ export const ProfileModal = ({ user, onClose, isDarkMode = true, isRecruiterView
           setExperiences(data.resume_data.experience || []);
           setSkills(data.resume_data.skills || []);
           setEducation(data.resume_data.education || []);
-          setLinks(data.resume_data.links || { portfolio: '', linkedin: '', facebook: '', github: '' });
+          setLinks(data.resume_data.links || EMPTY_LINKS);
         }
       }
+      setIsLoadingProfile(false);
     };
     fetchExistingResume();
     fetchSavedResumeData();
-  }, [user]);
+    // Reload only when a different person is shown, not on every parent re-render.
+  }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!user?.id || isLoadingProfile) return;
+    profileCache.set(user.id, {
+      resumeFile: resumeData,
+      fields: { id: user.id, phone, location, resume_data: { experience: experiences, education, skills, links } },
+    });
+  }, [user?.id, isLoadingProfile, resumeData, phone, location, experiences, education, skills, links]);
 
   useEffect(() => {
     if (!isEditingData || hasLinkErrors) return;
@@ -453,7 +475,9 @@ export const ProfileModal = ({ user, onClose, isDarkMode = true, isRecruiterView
               </div>
             </div>
             <div className={`rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 transition-colors ${isDarkMode ? 'bg-[#0a121c] border border-white/5' : 'bg-white border border-slate-200'}`}>
-              {resumeData ? (
+              {!resumeData && isLoadingResume ? (
+                <p role="status" className={`text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Loading resume…</p>
+              ) : resumeData ? (
                 <>
                   <div className="flex items-start gap-4">
                     <div className={`p-3 rounded-lg border text-[#ea6036] transition-colors ${isDarkMode ? 'bg-[#1a2636] border-white/5' : 'bg-slate-100 border-slate-200'}`}>
@@ -609,6 +633,14 @@ export const ProfileModal = ({ user, onClose, isDarkMode = true, isRecruiterView
                   </svg>
                   <h3 className={`text-base font-bold mb-1 ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>AI is analyzing your resume</h3>
                   <p className="text-xs">Extracting skills, education, and experience to build your profile...</p>
+                </div>
+              ) : isLoadingProfile ? (
+                <div role="status" className={`flex items-center justify-center gap-3 py-16 text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                  <svg className="animate-spin w-5 h-5 text-[#ea6036]" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+                  </svg>
+                  Loading your profile…
                 </div>
               ) : (
                 <>

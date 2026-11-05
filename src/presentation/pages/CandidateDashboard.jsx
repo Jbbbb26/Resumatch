@@ -1017,6 +1017,7 @@ export default function CandidateDashboard() {
       {isProfileModalOpen && (
         <ProfileModal
           user={user}
+          initialProfile={profile}
           onClose={async () => {
             setProfileModalOpen(false);
             if (!user?.id) return;
