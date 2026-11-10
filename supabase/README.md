@@ -23,7 +23,7 @@ Run each file in `supabase/migrations/` once, **in this order**. All of them are
 | 12 | `20261025e_withdraw_application.sql` | Candidates can withdraw applications |
 | 13 | `20261025f_company_logo_and_gallery.sql` | Company logo and 5-photo gallery (`company-media` bucket) |
 | 14 | `20261025g_login_attempt_limits.sql` | Sign-in attempt limits and cooldowns |
-| 15 | `20261025h_messaging.sql` | Recruiter ↔ applicant messages |
+| 15 | `20261110_application_messages.sql` | Recruiter ↔ applicant messages |
 | 16 | `20261025i_public_job_and_company.sql` | Public job and company pages for shared links (signed-out visitors) |
 
 The `get_recommended_jobs` function and the base tables (`job_postings`, `candidate_profiles`,
@@ -61,8 +61,10 @@ and each template's **To Email** must be exactly `{{to_email}}`.
 
 ## 4. Server environment (`.env` locally, Railway → Variables in production)
 
-See `.env.example`. Required: `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `GEMINI_API_KEY`,
-`SUPABASE_ANON_KEY`, and `CORS_ORIGINS` in production.
+Required: `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, at least one
+of `GEMINI_API_KEY` or `RESUMATCH_1` through `RESUMATCH_5`, `SUPABASE_ANON_KEY`,
+and `CORS_ORIGINS` in production. Set Gemini keys in Railway Variables for the API;
+do not prefix these secret keys with `VITE_`.
 
 ## 5. Free-plan reminders
 

@@ -3,6 +3,7 @@ import { useProfileData } from '../../hooks/useProfileData';
 import { WEB_ADDRESS_MESSAGE, normalizeWebAddress } from '../../data/webAddress';
 
 const MAX_RESUME_MB = 10;
+const READER_SERVICE_ERRORS = new Set(['BILLING_REQUIRED', 'READER_ACCESS_DENIED', 'READER_RATE_LIMIT', 'READER_BUSY', 'READER_UNREACHABLE', 'SAVE_FAILED']);
 const isPdfFile = (file) => file && (file.type === 'application/pdf' || /\.pdf$/i.test(file.name || ''));
 
 const toParseProblem = (result) => ({
@@ -19,7 +20,7 @@ const toParseProblem = (result) => ({
 const profileCache = new Map();
 const EMPTY_LINKS = { portfolio: '', linkedin: '', facebook: '', github: '' };
 
-export const ProfileModal = ({ user, onClose, isDarkMode = true, isRecruiterView = false, initialProfile = null }) => {
+export const ProfileModal = ({ user, onClose, onProfileChanged, isDarkMode = true, isRecruiterView = false, initialProfile = null }) => {
   const cached = (user?.id && profileCache.get(user.id))
     || (initialProfile && initialProfile.id === user?.id ? { fields: initialProfile } : null);
   const cachedFields = cached?.fields || null;
@@ -219,6 +220,7 @@ export const ProfileModal = ({ user, onClose, isDarkMode = true, isRecruiterView
         setSkills(result.data.skills || []);
         setEducation(result.data.education || []);
         setResumeData(prev => (prev ? { ...prev, status: 'Read successfully' } : prev));
+        onProfileChanged?.();
       } else {
         setParseProblem(toParseProblem(result));
         setResumeData(prev => (prev ? { ...prev, status: "Uploaded, but couldn't be read" } : prev));
@@ -286,6 +288,8 @@ export const ProfileModal = ({ user, onClose, isDarkMode = true, isRecruiterView
     });
     if (updateError) {
       setResumeError(`File removed, but profile could not be cleared: ${updateError.message}`);
+    } else {
+      onProfileChanged?.();
     }
 
     setResumeData(null);
@@ -309,14 +313,19 @@ export const ProfileModal = ({ user, onClose, isDarkMode = true, isRecruiterView
       skills: skills,
       links: cleanLinks()
     };
-    await updateCandidateProfile(user.id, {
+    const { error } = await updateCandidateProfile(user.id, {
       resume_data: updatedResumeData,
       phone: phone,
       location: location
     });
     setIsSavingData(false);
+    if (error) {
+      setResumeError(`Could not save profile: ${error.message}`);
+      return;
+    }
     setIsEditingData(false);
     setIsEditable(false);
+    onProfileChanged?.();
   };
 
   const handleEduChange = (index, field, value) => {
@@ -563,10 +572,12 @@ export const ProfileModal = ({ user, onClose, isDarkMode = true, isRecruiterView
                         Try again
                       </button>
                     )}
-                    <button type="button" onClick={() => fileInputRef.current?.click()} disabled={isUploading}
-                      className={`rounded-lg border px-3 py-1.5 text-xs font-bold ${isDarkMode ? 'border-white/15 text-slate-200 hover:bg-white/5' : 'border-amber-300 text-amber-900 hover:bg-white'}`}>
-                      Upload a different PDF
-                    </button>
+                    {!READER_SERVICE_ERRORS.has(parseProblem.code) && (
+                      <button type="button" onClick={() => fileInputRef.current?.click()} disabled={isUploading}
+                        className={`rounded-lg border px-3 py-1.5 text-xs font-bold ${isDarkMode ? 'border-white/15 text-slate-200 hover:bg-white/5' : 'border-amber-300 text-amber-900 hover:bg-white'}`}>
+                        Upload a different PDF
+                      </button>
+                    )}
                     <button type="button" onClick={() => { setIsEditingData(true); setParseProblem(null); }}
                       className={`rounded-lg border px-3 py-1.5 text-xs font-bold ${isDarkMode ? 'border-white/15 text-slate-200 hover:bg-white/5' : 'border-amber-300 text-amber-900 hover:bg-white'}`}>
                       Fill in my details manually

@@ -4,6 +4,7 @@ import { ConfirmDialog } from './ConfirmDialog';
 import { ChangePasswordModal } from './ChangePasswordModal';
 import AppIcon from '../../../assets/Icon.png';
 import { NotificationBell } from './NotificationBell';
+import { useUnreadMessageCount } from '../../hooks/useMessages';
 
 export const TopHeader = ({ user, isDarkMode, toggleTheme, openProfile, logout, openApplications, applicationsCount, onNotificationSelect, onHome }) => {
   const navigate = useNavigate();
@@ -11,6 +12,7 @@ export const TopHeader = ({ user, isDarkMode, toggleTheme, openProfile, logout, 
   const [isConfirmingLogout, setIsConfirmingLogout] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [isChangingPassword, setIsChangingPassword] = useState(false);
+  const unreadMessages = useUnreadMessageCount(user?.id);
 
   const goHome = (event) => {
     event?.preventDefault();
@@ -58,6 +60,14 @@ export const TopHeader = ({ user, isDarkMode, toggleTheme, openProfile, logout, 
             <button type="button" onClick={goHome} aria-label="Go to dashboard" title="Dashboard" className={`flex items-center transition-colors ${isDarkMode ? 'hover:text-white' : 'hover:text-slate-900'}`}>
               <svg className="block w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path></svg>
             </button>
+            {user?.id && (
+              <button type="button" onClick={() => navigate('/messages')} title="Messages"
+                aria-label={unreadMessages ? `Messages, ${unreadMessages} unread` : 'Messages'}
+                className={`relative flex items-center transition-colors ${isDarkMode ? 'hover:text-white' : 'hover:text-slate-900'}`}>
+                <svg className="block h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 10h8M8 14h5m-9 6 3.2-2.4A2 2 0 018.4 17H19a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v14z" /></svg>
+                {unreadMessages > 0 && <span className={`absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-[#ea6036] px-1 text-[9px] font-bold text-white ring-2 ${isDarkMode ? 'ring-[#090e15]' : 'ring-white'}`}>{unreadMessages > 9 ? '9+' : unreadMessages}</span>}
+              </button>
+            )}
             {user?.id && <NotificationBell userId={user.id} isDarkMode={isDarkMode} onSelect={onNotificationSelect} />}
             <button type="button" onClick={toggleTheme} aria-label={isDarkMode ? 'Switch to light mode' : 'Switch to dark mode'} className={`flex items-center transition-colors ${isDarkMode ? 'hover:text-white' : 'hover:text-slate-900'}`}>
               {isDarkMode ? (

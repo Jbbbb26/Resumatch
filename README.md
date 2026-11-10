@@ -21,10 +21,9 @@ src/
   data/                    Shared constants and data: jobOptions, pipelineStages,
                            applicationForm, jobAttachments
     services/              Supabase / API helpers and logic: authService, apiClient,
-                           matchScoring, jobText, companyMedia, publicData, returnPath
+                           matchAnalysis, matchScoring, jobText, companyMedia, publicData, returnPath
 supabaseClient.js          Supabase client for the browser
 server.js                  Express API (deployed to Railway)
-matchAnalysis.js           Per-requirement match scoring (Gemini embeddings)
 loginLimiter.js            Sign-in attempt limits
 resumeParser.js            Resume reading with Gemini
 supabase/                  Migrations, Edge Functions and setup guide (supabase/README.md)
@@ -32,8 +31,8 @@ scripts/                   One-off maintenance scripts
 tests/                     Node tests (npm test)
 ```
 
-The server imports `src/data/jobOptions.js`, so the job options stay the same in the
-browser and the API.
+The server imports `src/data/jobOptions.js` and `src/data/services/matchAnalysis.js`,
+so job options and per-requirement matching share the same source across the app and API.
 
 ## Commands
 
@@ -44,5 +43,12 @@ browser and the API.
 | `npm start` | Start the API (`node server.js`) |
 | `npm test` | Run the tests |
 
-Environment variables: copy `.env.example` to `.env` (one file at the repo root for both
+Environment variables: set them in `.env` (one file at the repo root for both
 the frontend and the API). Supabase setup: see `supabase/README.md`.
+
+For Gemini, configure `GEMINI_API_KEY` and optionally `RESUMATCH_1` through
+`RESUMATCH_5` on the server (in `.env` locally and Railway Variables in production).
+At least one of these keys is required. The API tries another configured key when
+Gemini returns a rate limit, access denial, server error, or network error. Gemini
+quotas are per Google project, so keys from the same project share the same quota.
+Keep all Gemini keys and `SUPABASE_SERVICE_KEY` out of `VITE_` variables and source control.

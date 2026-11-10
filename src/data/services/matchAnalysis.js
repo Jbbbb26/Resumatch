@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
-import { MATCH_SCORE_DEFAULTS, overallCreditFor } from './src/data/matchExplanation.js';
+import { MATCH_SCORE_DEFAULTS, overallCreditFor } from '../matchExplanation.js';
 
 export const EMBEDDING_MODEL = 'gemini-embedding-2';
-const ANALYSIS_VERSION = 1;
+const ANALYSIS_VERSION = 7;
 const EMBED_CONCURRENCY = 6;
 
 const num = (name, fallback) => {
@@ -43,20 +43,26 @@ const wordCount = (text) => text.split(/\s+/).filter(Boolean).length;
 const isHeading = (line) => wordCount(line) <= 5 && !/[.!?]$/.test(line)
   && line.split(/\s+/).every((word) => /^[A-Z&/]/.test(word) || /^(and|or|of|the|for|to|&)$/i.test(word));
 
-export function splitLines(value) {
+const GENERIC_REQUIREMENT_HEADING = /^(?:(?:(?:minimum|required|preferred|technical|core)\s+)?(?:requirements?|qualifications?|skills?)|must[- ]?haves?|nice[- ]?to[- ]?haves?|what you(?:'|’)ll need|what we(?:'|’)re looking for)$/i;
+
+export function splitLines(value, { allowShort = false } = {}) {
   const lines = [];
+  const minWords = allowShort ? 1 : 3;
   for (const raw of plainText(value).split(/\n|•|▪|◦|·/)) {
     const line = raw.replace(/^\s*(?:[-*–]|\d+[.)])\s+/, '').replace(/\s+/g, ' ').trim();
-    if (wordCount(line) < 3 || /:$/.test(line) || isHeading(line)) continue;
-    const parts = wordCount(line) > 35 ? line.split(/(?<=[.!?])\s+(?=[A-Z])/) : [line];
-    for (const part of parts) if (wordCount(part) >= 3) lines.push(part.trim());
+    if (wordCount(line) < minWords || /:$/.test(line)
+      || (allowShort ? GENERIC_REQUIREMENT_HEADING.test(line) : isHeading(line))) continue;
+    // Description responsibilities are sentences whether entered on separate lines or as one paragraph.
+    const parts = !allowShort || wordCount(line) > 35
+      ? line.split(/(?<=[.!?])\s+(?=[A-Z])/) : [line];
+    for (const part of parts) if (wordCount(part) >= minWords) lines.push(part.trim());
   }
   return [...new Set(lines)];
 }
 
 export function jobItems(job) {
   const { maxRequirements, maxResponsibilities, requirementWeight, responsibilityWeight } = MATCH_SETTINGS;
-  const requirements = splitLines(job.requirements).slice(0, maxRequirements)
+  const requirements = splitLines(job.requirements, { allowShort: true }).slice(0, maxRequirements)
     .map((text) => ({ text, source: 'requirement', weight: requirementWeight }));
   const seen = new Set(requirements.map((item) => item.text));
   const responsibilities = splitLines(job.description).filter((text) => !seen.has(text))
@@ -120,11 +126,37 @@ const credit = (similarity) => clamp01((similarity - MATCH_SETTINGS.floor) / (MA
 const statusFor = (similarity) => (similarity >= MATCH_SETTINGS.metAt ? 'met'
   : similarity >= MATCH_SETTINGS.partialAt ? 'partial' : 'missing');
 
+const SKILL_ALIASES = new Map([
+  ['js', 'javascript'], ['reactjs', 'react'], ['amazonwebservices', 'aws'],
+]);
+const canonicalSkill = (value) => {
+  const compact = String(value ?? '').toLowerCase().replace(/[^a-z0-9+#]/g, '');
+  return SKILL_ALIASES.get(compact) || compact;
+};
+const isShortSkill = (requirement) => requirement.source === 'requirement'
+  && wordCount(requirement.text) <= 2 && requirement.text.length <= 40;
+const containsSkillName = (text, name) => {
+  const escaped = name.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
+  return new RegExp(`(^|[^a-z0-9])${escaped}(?=$|[^a-z0-9])`, 'i').test(text);
+};
+const directSkillEvidence = (requirement, item) => item.type === 'skill'
+  ? canonicalSkill(requirement.text) === canonicalSkill(item.text)
+  : containsSkillName(item.text, requirement.text);
+
 export function scoreAnalysis({ requirements, evidence, overallSimilarity }) {
   const rows = requirements.map((requirement) => {
     let best = null;
+    const requiresDirectEvidence = isShortSkill(requirement);
+    const requiresLiteralEvidence = requiresDirectEvidence && wordCount(requirement.text) === 1;
+    let foundEligibleEvidence = false;
     for (const item of evidence) {
-      const similarity = cosine(requirement.vector, item.vector);
+      const rawSimilarity = cosine(requirement.vector, item.vector);
+      const isDirect = requiresDirectEvidence && directSkillEvidence(requirement, item);
+      const strongExperience = requiresDirectEvidence && !requiresLiteralEvidence && item.type !== 'skill'
+        && rawSimilarity != null && rawSimilarity >= MATCH_SETTINGS.metAt;
+      if (requiresDirectEvidence && !isDirect && !strongExperience) continue;
+      foundEligibleEvidence = true;
+      const similarity = isDirect && item.type === 'skill' ? 1 : rawSimilarity;
       if (similarity != null && (!best || similarity > best.similarity)) best = { item, similarity };
     }
     const similarity = best?.similarity ?? 0;
@@ -135,6 +167,7 @@ export function scoreAnalysis({ requirements, evidence, overallSimilarity }) {
       similarity: Math.round(similarity * 1000) / 1000,
       credit: Math.round(credit(similarity) * 1000) / 1000,
       status: best ? statusFor(similarity) : 'missing',
+      noDirectEvidence: requiresDirectEvidence && !foundEligibleEvidence,
       evidence: best && statusFor(similarity) !== 'missing' ? best.item.text : null,
       evidenceType: best && statusFor(similarity) !== 'missing' ? best.item.type : null,
     };
@@ -144,10 +177,14 @@ export function scoreAnalysis({ requirements, evidence, overallSimilarity }) {
   const overall = Number.isFinite(overallSimilarity)
     ? clamp01((overallSimilarity - MATCH_SETTINGS.overallFloor) / (MATCH_SETTINGS.overallCeiling - MATCH_SETTINGS.overallFloor))
     : 0;
-  const coverage = totalWeight ? rows.reduce((sum, row) => sum + row.credit * row.weight, 0) / totalWeight : overall;
+  const coverage = totalWeight ? rows.reduce((sum, row) => sum + row.credit * row.weight, 0) / totalWeight : 0;
   const hasEvidence = evidence.length > 0;
+  // Whole-document embeddings use different formats for jobs and resumes.
+  // Let that signal improve a partial match without reducing fully supported coverage.
+  const overallContribution = Math.max(coverage, overall);
+  // Keep exact half-point totals from rounding down due to floating-point error.
   const score = hasEvidence
-    ? Math.round(100 * clamp01(MATCH_SETTINGS.coverageWeight * coverage + MATCH_SETTINGS.overallWeight * overall))
+    ? Math.round(100 * clamp01(MATCH_SETTINGS.coverageWeight * coverage + MATCH_SETTINGS.overallWeight * overallContribution) + 1e-9)
     : 0;
 
   return {

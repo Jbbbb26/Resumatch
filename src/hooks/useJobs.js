@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchMatchAnalyses, getRecommendedJobs, listActiveJobs, listCompanyNames } from '../data/services/jobService';
 import { getCandidateProfileFields } from '../data/services/profileService';
 
@@ -103,17 +103,20 @@ export function useJobs(candidateId, enabled = true) {
   const [jobs, setJobs] = useState([]);
   const [isLoading, setIsLoading] = useState(Boolean(enabled));
   const [error, setError] = useState('');
+  const latestRequest = useRef(0);
 
   const refetch = useCallback(async () => {
     if (!enabled || !candidateId) return;
+    const request = ++latestRequest.current;
     setIsLoading(true);
     setError('');
     try {
-      setJobs(await fetchJobs(candidateId));
+      const updatedJobs = await fetchJobs(candidateId);
+      if (request === latestRequest.current) setJobs(updatedJobs);
     } catch (loadError) {
-      setError(loadError.message || 'Unable to load job listings.');
+      if (request === latestRequest.current) setError(loadError.message || 'Unable to load job listings.');
     } finally {
-      setIsLoading(false);
+      if (request === latestRequest.current) setIsLoading(false);
     }
   }, [candidateId, enabled]);
 

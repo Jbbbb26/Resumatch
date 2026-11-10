@@ -234,6 +234,9 @@ export function ApplicationDetailModal({ applicationId, isDarkMode, onClose, onC
               )}
 
               <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+                <Link to={`/messages?application=${application.id}`} className="inline-flex rounded-xl bg-[#ea6036] px-4 py-2 text-sm font-bold text-white hover:bg-[#d8552e]">
+                  Message recruiter
+                </Link>
                 {job?.id && (
                   <Link to={`/candidate-dashboard/jobs/${job.id}`} target="_blank" rel="noopener noreferrer" className="inline-flex text-sm font-semibold text-[#ea6036] hover:underline">
                     View job posting

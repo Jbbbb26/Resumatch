@@ -3,7 +3,8 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { createClient } from '@supabase/supabase-js';
 import { GoogleGenAI } from '@google/genai';
-import { analyzeJobsForCandidate } from './matchAnalysis.js';
+import { configuredGeminiKeys, createGeminiFailover } from './geminiFailover.js';
+import { analyzeJobsForCandidate } from './src/data/services/matchAnalysis.js';
 import { EXPERIENCE_LEVELS, JOB_CATEGORIES, SALARY_MAX_ALLOWED } from './src/data/jobOptions.js';
 import dns from 'node:dns';
 import { createLoginHandler } from './loginLimiter.js';
@@ -27,8 +28,10 @@ app.use(cors({
 }));
 app.use(express.json());
 
-const REQUIRED_ENV = ['SUPABASE_URL', 'SUPABASE_SERVICE_KEY', 'GEMINI_API_KEY'];
+const REQUIRED_ENV = ['SUPABASE_URL', 'SUPABASE_SERVICE_KEY'];
 const missingEnv = REQUIRED_ENV.filter((name) => !process.env[name]);
+const geminiKeys = configuredGeminiKeys();
+if (!geminiKeys.length) missingEnv.push('GEMINI_API_KEY or RESUMATCH_1..5');
 if (missingEnv.length) {
   console.error(`Missing environment variables: ${missingEnv.join(', ')}. Set them in Railway > Variables (or .env locally).`);
   process.exit(1);
@@ -39,7 +42,10 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_KEY
 );
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const ai = createGeminiFailover({
+  keys: geminiKeys,
+  makeClient: (key) => new GoogleGenAI({ apiKey: key }),
+});
 
 const requireUser = async (req, res, next) => {
   const token = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');

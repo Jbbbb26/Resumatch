@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useStageHistory } from '../../../hooks/useStageHistory';
 import { useResumeFile } from '../../../hooks/useResumeFile';
 import { PIPELINE_STAGES, getPipelinePerson } from '../../../data/pipelineStages';
@@ -71,6 +72,9 @@ export function CandidateDrawer({ application, isDarkMode, onClose, onSaveNotes,
               <div className="flex gap-2"><dt className={muted}>Match</dt><dd className={`${heading} font-bold`}>{Math.round(Number(application.match_score || 0))}%</dd></div>
               <div className="flex gap-2"><dt className={muted}>Applied</dt><dd className={heading}>{formatTimestamp(application.applied_at)}</dd></div>
             </dl>
+            <Link to={`/messages?application=${application.id}`} className={`mt-4 mr-2 inline-flex rounded-xl border px-4 py-2 text-sm font-bold ${isDarkMode ? 'border-white/15 text-white hover:bg-white/5' : 'border-slate-300 text-slate-700 hover:bg-white'}`}>
+              Message candidate
+            </Link>
             {resume.status === 'ready' && (
               <button type="button" onClick={resume.openResume} disabled={resume.isOpening} className="mt-4 inline-flex rounded-xl bg-[#ea6036] px-4 py-2 text-sm font-bold text-white hover:bg-[#d8552e] disabled:cursor-wait disabled:opacity-70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#ea6036]">
                 {resume.isOpening ? 'Opening resume…' : 'View resume'}

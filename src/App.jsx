@@ -6,6 +6,7 @@ import RecruiterDashboard from './presentation/pages/RecruiterDashboard';
 import JobDetailsPage from './presentation/pages/JobDetailsPage';
 import CompanyProfilePage from './presentation/pages/CompanyProfilePage';
 import LegalPage from './presentation/pages/LegalPage';
+import MessagesPage from './presentation/pages/MessagesPage';
 
 export default function App() {
   return (
@@ -20,6 +21,7 @@ export default function App() {
         <Route path="/candidate-dashboard/jobs/:jobId" element={<JobDetailsPage />} />
         <Route path="/jobs/:jobId" element={<JobDetailsPage />} />
         <Route path="/recruiter-dashboard" element={<RecruiterDashboard />} />
+        <Route path="/messages" element={<MessagesPage />} />
         <Route path="/companies/:companyId" element={<CompanyProfilePage />} />
         <Route path="/terms" element={<LegalPage type="terms" />} />
         <Route path="/privacy" element={<LegalPage type="privacy" />} />

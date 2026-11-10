@@ -1,0 +1,39 @@
+/* Tailwind's base styles shrink images; map tiles must keep their exact size. */
+.rm-map img.leaflet-tile,
+.rm-map .leaflet-marker-icon,
+.rm-map .leaflet-marker-shadow {
+  max-width: none !important;
+  max-height: none !important;
+}
+.rm-map { z-index: 0; font: inherit; }
+
+/* Light tiles, softened so the heat colours stand out. */
+.rm-map .leaflet-tile-pane { filter: saturate(0.55) brightness(1.03); }
+/* Dark mode: invert the tiles only; the heat layer and bubbles keep their colours. */
+.rm-map-dark .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.9) saturate(0.4); }
+.rm-map-dark.leaflet-container { background: #0e1621; }
+
+.rm-count-icon { background: transparent; border: 0; }
+.rm-count-icon span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  background: rgba(234, 96, 54, 0.92);
+  border: 2px solid #fff;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.35);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.rm-popup { min-width: 190px; font-size: 12px; color: #334155; }
+.rm-popup-title { margin: 0; font-size: 14px; font-weight: 700; color: #0f172a; }
+.rm-popup-sub { margin: 2px 0 6px; color: #64748b; }
+.rm-popup-count { margin: 0 0 8px; }
+.rm-popup-count b { font-size: 16px; color: #ea6036; }
+.rm-popup-head { margin: 6px 0 2px; font-size: 10px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: #94a3b8; }
+.rm-popup ul { margin: 0; padding: 0; list-style: none; }
+.rm-popup li { display: flex; justify-content: space-between; gap: 12px; padding: 1px 0; }
+.rm-popup li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -485,6 +485,19 @@ export default function CandidateDashboard() {
   const analysisInFlightRef = useRef(new Set());
   const [detailApplicationId, setDetailApplicationId] = useState(null);
 
+  const refreshProfileAndMatches = async () => {
+    if (!user?.id) return;
+    try {
+      const [{ data, error }] = await Promise.all([
+        getCandidateProfileFields(user.id),
+        reloadJobs(),
+      ]);
+      if (!error && data) setProfile(data);
+    } catch (refreshError) {
+      console.error('Could not refresh the profile after a resume change:', refreshError);
+    }
+  };
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const applicationId = params.get('application');
@@ -1018,6 +1031,7 @@ export default function CandidateDashboard() {
         <ProfileModal
           user={user}
           initialProfile={profile}
+          onProfileChanged={refreshProfileAndMatches}
           onClose={async () => {
             setProfileModalOpen(false);
             if (!user?.id) return;

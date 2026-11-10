@@ -1,6 +1,7 @@
 import { MATCH_SCORE_DEFAULTS, explainMatchScore } from '../../data/matchExplanation';
 
 const pct = (value) => Math.round(Math.max(0, Math.min(1, Number(value) || 0)) * 100);
+const pctDetailed = (value) => (Math.round(Math.max(0, Math.min(1, Number(value) || 0)) * 1000) / 10).toFixed(1);
 
 const STATUS = {
   met: { label: 'Covered', icon: '✓', light: 'bg-emerald-50 text-emerald-700 border-emerald-200', dark: 'bg-emerald-950/40 text-emerald-300 border-emerald-900' },
@@ -38,7 +39,9 @@ function RequirementRow({ row, isDarkMode, whose = 'your' }) {
           <p className={`text-sm leading-snug ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>{row.text}</p>
           <p className={`mt-1 text-xs leading-relaxed ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
             <span className="font-semibold">{status.label}</span>
-            {' · '}{row.status === 'missing'
+            {' · '}{row.noDirectEvidence
+              ? `no direct evidence of ${row.text} on ${whose} resume`
+              : row.status === 'missing'
               ? `closest line on ${whose} resume is only ${pct(row.similarity)}% similar (${pct(MATCH_SCORE_DEFAULTS.partialAt)}% needed)`
               : `${pct(row.similarity)}% similar to ${whose} resume`}
             {row.source === 'description' && ' · from job description'}
@@ -57,23 +60,31 @@ function RequirementRow({ row, isDarkMode, whose = 'your' }) {
 function ScoreFormula({ analysis, muted, isDarkMode, recruiter }) {
   const parts = explainMatchScore(analysis);
   if (!parts) return null;
-  const belowFloor = parts.similarity != null && parts.overallCredit === 0;
+  const belowFloor = parts.similarity != null && parts.rawOverallCredit === 0;
+  const rows = analysis.requirements || [];
+  const hasMissing = rows.some((row) => row.status === 'missing');
+  const hasPartial = rows.some((row) => row.status === 'partial');
+  const improvement = parts.score >= 100 ? null : hasMissing
+    ? 'To raise it, add true, specific evidence to your resume for requirements marked "Not found".'
+    : hasPartial
+      ? 'To raise it, add true, specific evidence for requirements marked "Partly covered".'
+      : parts.coverage < 1
+        ? 'More specific evidence for the covered items below 85% similarity could raise the score.'
+        : null;
   return (
     <div className={`border-t pt-3 text-xs leading-relaxed ${isDarkMode ? 'border-white/10' : 'border-slate-200'} ${muted}`}>
       <p className="font-semibold">How it's calculated</p>
       <ul className="mt-1 space-y-0.5">
-        <li>Requirement coverage {pct(parts.coverage)}% × {Math.round(parts.coverageWeight * 100)}% = {points(parts.coveragePoints)} points <span className="opacity-80">(listed requirements count twice as much as description lines)</span></li>
+        <li>Requirement coverage {pctDetailed(parts.coverage)}% × {Math.round(parts.coverageWeight * 100)}% = {points(parts.coveragePoints)} points <span className="opacity-80">(listed requirements count twice as much as description lines)</span></li>
         <li>
-          Overall resume match {pct(parts.overallCredit)}% × {Math.round(parts.overallWeight * 100)}% = {points(parts.overallPoints)} points
+          Overall component {pctDetailed(parts.overallCredit)}% × {Math.round(parts.overallWeight * 100)}% = {points(parts.overallPoints)} points
           {parts.similarity != null && (
-            <span className="opacity-80"> (overall similarity {pct(parts.similarity)}%; {belowFloor
-              ? `similarity below ${pct(parts.floor)}% counts as 0%`
-              : `${pct(parts.floor)}% similarity counts as 0% and ${pct(parts.ceiling)}% or more counts as 100%`})</span>
+            <span className="opacity-80"> (higher of requirement coverage {pctDetailed(parts.coverage)}% and whole-resume credit {pctDetailed(parts.rawOverallCredit)}%; raw overall similarity {pct(parts.similarity)}%{belowFloor ? `, below the ${pct(parts.floor)}% floor` : ''})</span>
           )}
         </li>
         <li className="font-semibold">Total {points(parts.coveragePoints)} + {points(parts.overallPoints)} = {points(parts.total)}, shown as {parts.score}%</li>
       </ul>
-      {!recruiter && <p className="mt-1">To raise it, add true, specific evidence to your resume for the requirements marked "Not found".</p>}
+      {!recruiter && improvement && <p className="mt-1">{improvement}</p>}
     </div>
   );
 }

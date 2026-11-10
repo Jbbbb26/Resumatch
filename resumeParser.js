@@ -1,5 +1,5 @@
 export const MAX_RESUME_BYTES = 10 * 1024 * 1024;
-const PARSE_MODEL = 'gemini-3.6-flash';
+export const RESUME_PARSE_MODEL = 'gemini-3.6-flash';
 const EMBEDDING_MODEL = 'gemini-embedding-2';
 
 export const RESUME_ERRORS = Object.freeze({
@@ -38,6 +38,21 @@ export const RESUME_ERRORS = Object.freeze({
     message: 'The resume reader is busy right now.',
     nextStep: 'Your file is saved. Click "Try again" in a minute.',
   },
+  READER_RATE_LIMIT: {
+    status: 429, retryable: true,
+    message: 'The resume reader has reached its Gemini API rate or quota limit.',
+    nextStep: 'Your file is saved. Wait for the limit to reset, then try again. The app owner can check usage and limits in Google AI Studio.',
+  },
+  BILLING_REQUIRED: {
+    status: 403, retryable: true,
+    message: 'The Gemini API is unavailable for this project until billing is set up.',
+    nextStep: 'Your file is saved. The app owner must enable billing in Google AI Studio or use a key from a project with API access. Then click "Try again", or fill in your details manually meanwhile.',
+  },
+  READER_ACCESS_DENIED: {
+    status: 403, retryable: true,
+    message: 'The resume reader cannot access the configured Gemini API project.',
+    nextStep: 'The app owner should check the Gemini API key and project permissions. Then click "Try again", or fill in your details manually meanwhile.',
+  },
   READER_UNREACHABLE: {
     status: 503, retryable: true,
     message: "We couldn't reach the resume reader.",
@@ -70,13 +85,16 @@ export function classifyAiError(error) {
   if (error instanceof ResumeReadError) return error.code;
   const status = Number(error?.status);
   const text = String(error?.message || '');
-  if (status === 429 || status === 503 || /overloaded|resource exhausted|unavailable/i.test(text)) return 'READER_BUSY';
+  if (status === 403) return /free tier.*not available|set up billing|billing/i.test(text)
+    ? 'BILLING_REQUIRED' : 'READER_ACCESS_DENIED';
+  if (status === 429 || /resource exhausted|quota exceeded|rate limit/i.test(text)) return 'READER_RATE_LIMIT';
+  if (status === 503 || /overloaded|temporarily unavailable|service unavailable/i.test(text)) return 'READER_BUSY';
   if (NETWORK_CODES.has(error?.cause?.code) || text === 'fetch failed') return 'READER_UNREACHABLE';
   if (status === 400 && /pdf|document|mime|invalid argument|unable to process|no pages/i.test(text)) return 'NOT_PDF';
   return 'UNKNOWN';
 }
 
-const isTransient = (error) => ['READER_BUSY', 'READER_UNREACHABLE'].includes(classifyAiError(error));
+const isTransient = (error) => ['READER_BUSY', 'READER_RATE_LIMIT', 'READER_UNREACHABLE'].includes(classifyAiError(error));
 
 async function withRetries(task, attempts = 3) {
   let delay = 2000;
@@ -99,7 +117,7 @@ export function inspectPdf(buffer) {
   return { encrypted: buffer.toString('latin1').includes('/Encrypt') };
 }
 
-const PROMPT = `
+export const RESUME_PARSE_PROMPT = `
 You are an expert HR parsing AI. Read the attached resume document and extract the data into a strict JSON object.
 Only return valid JSON, no markdown formatting or extra text.
 
@@ -116,6 +134,9 @@ Required JSON Structure:
   ],
   "skills": ["Skill 1", "Skill 2"]
 }
+
+List only skills explicitly stated in the resume. Do not infer a skill from a job title,
+degree, related technology, or typical duties.
 `;
 
 export function interpretReply(text, { encrypted = false } = {}) {
@@ -174,8 +195,8 @@ export function createParseResumeHandler({ supabase, ai }) {
     try {
       const { encrypted } = inspectPdf(buffer);
       const response = await withRetries(() => ai.models.generateContent({
-        model: PARSE_MODEL,
-        contents: [{ inlineData: { data: buffer.toString('base64'), mimeType: 'application/pdf' } }, PROMPT],
+        model: RESUME_PARSE_MODEL,
+        contents: [{ inlineData: { data: buffer.toString('base64'), mimeType: 'application/pdf' } }, RESUME_PARSE_PROMPT],
       }));
       structuredData = interpretReply(response?.text, { encrypted });
 

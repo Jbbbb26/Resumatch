@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { Suspense, lazy, useEffect, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { useApplications } from '../../hooks/useApplications';
 import { useJobData } from '../../hooks/useJobData';
@@ -18,6 +18,8 @@ import { RichJobEditor } from '../components/RichJobEditor';
 import { MatchAnalysis } from '../components/MatchAnalysis';
 import { EXPERIENCE_LEVELS, JOB_CATEGORIES, JOB_TEXT_LIMITS } from '../../data/jobOptions';
 import { compareByRanking, rankingScore } from '../../data/pipelineStages';
+
+const LocationAnalyticsPage = lazy(() => import('./LocationAnalyticsPage'));
 
 // Older applications were saved before the application snapshot existed.
 // For those, show the candidate's current profile instead.
@@ -58,7 +60,7 @@ function Badge({ children, positive = false, isDarkMode }) {
 }
 
 function Sidebar({ active, onNavigate, isDarkMode }) {
-  const items = [['home', 'Dashboard'], ['jobs', 'Job Listings'], ['pipeline', 'Pipeline']];
+  const items = [['home', 'Dashboard'], ['jobs', 'Job Listings'], ['pipeline', 'Pipeline'], ['locations', 'Applicant Locations']];
   return (
     <aside className={`flex w-[250px] shrink-0 flex-col gap-4 px-5 py-8 border-r transition-colors duration-200 ${isDarkMode ? 'bg-[#090e15] border-white/5' : 'bg-slate-50 border-slate-200'}`}>
       <div className={`mb-4 text-xs font-bold tracking-wider uppercase ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
@@ -327,6 +329,9 @@ function ReviewApplicationsModal({ job, onClose, isDarkMode }) {
                         >
                           View profile
                         </button>
+                        <Link to={`/messages?application=${app.id}`} className={`rounded-lg border px-3 py-1.5 text-xs font-bold transition-colors ${isDarkMode ? 'border-white/10 text-slate-300 hover:bg-[#1a2636]' : 'border-slate-300 text-slate-600 hover:bg-white'}`}>
+                          Message
+                        </Link>
                         <button
                             type="button"
                             aria-expanded={expandedApplicationId === app.id}
@@ -819,7 +824,9 @@ export default function RecruiterDashboard() {
     );
   }
 
-  const content = view === 'pipeline'
+  const content = view === 'locations'
+    ? <Suspense fallback={<p className="text-sm">Loading map…</p>}><LocationAnalyticsPage user={user} isDarkMode={isDarkMode} /></Suspense>
+    : view === 'pipeline'
     ? <PipelinePage user={user} isDarkMode={isDarkMode} />
     : view === 'jobs'
       ? <JobsPage user={user} isDarkMode={isDarkMode} setJobs={setJobs} applicants={applicants} setApplicants={setApplicants} />

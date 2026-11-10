@@ -20,6 +20,8 @@
     "dompurify": "^3.4.17",
     "dotenv": "^18.0.3",
     "express": "^5.2.1",
+    "leaflet": "^1.9.4",
+    "leaflet.heat": "^0.2.0",
     "mammoth": "^1.13.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",

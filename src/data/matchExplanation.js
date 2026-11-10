@@ -23,9 +23,10 @@ export function explainMatchScore(analysis) {
   const ceiling = Number(analysis.overallCeiling ?? MATCH_SCORE_DEFAULTS.overallCeiling);
   const coverage = clamp01(Number(analysis.coverage) || 0);
   const similarity = toNumber(analysis.overallSimilarity);
-  const overallCredit = analysis.overallCredit != null
+  const rawOverallCredit = analysis.overallCredit != null
     ? clamp01(Number(analysis.overallCredit))
     : overallCreditFor(similarity, floor, ceiling);
+  const overallCredit = Math.max(coverage, rawOverallCredit);
   const coveragePoints = 100 * coverageWeight * coverage;
   const overallPoints = 100 * overallWeight * overallCredit;
   return {
@@ -33,6 +34,7 @@ export function explainMatchScore(analysis) {
     coveragePoints,
     coverageWeight,
     similarity,
+    rawOverallCredit,
     overallCredit,
     overallPoints,
     overallWeight,
