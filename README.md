@@ -52,3 +52,5 @@ At least one of these keys is required. The API tries another configured key whe
 Gemini returns a rate limit, access denial, server error, or network error. Gemini
 quotas are per Google project, so keys from the same project share the same quota.
 Keep all Gemini keys and `SUPABASE_SERVICE_KEY` out of `VITE_` variables and source control.
+
+Staging environment for ResuMatch testing.
