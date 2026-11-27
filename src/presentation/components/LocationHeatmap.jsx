@@ -53,7 +53,21 @@ export const LocationHeatmap = forwardRef(function LocationHeatmap({ groups, isD
       if (!marker || !mapRef.current) return;
       const map = mapRef.current;
       map.closePopup();
-      map.once('moveend', () => marker.openPopup()); // open after the fly-to so it is not cut off
+      let animationFrame = null;
+      const redrawHeat = () => {
+        if (animationFrame !== null) return;
+        animationFrame = window.requestAnimationFrame(() => {
+          animationFrame = null;
+          const heat = layersRef.current.heat;
+          if (heat?._map) heat._reset();
+        });
+      };
+      map.on('move', redrawHeat);
+      map.once('moveend', () => {
+        map.off('move', redrawHeat);
+        if (animationFrame !== null) window.cancelAnimationFrame(animationFrame);
+        marker.openPopup(); // open after the fly-to so it is not cut off
+      });
       map.flyTo(marker.getLatLng(), Math.max(map.getZoom(), 10), { duration: 0.8 });
     },
   }));

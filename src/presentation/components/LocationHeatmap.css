@@ -19,7 +19,8 @@
   align-items: center;
   justify-content: center;
   border-radius: 9999px;
-  background: rgba(234, 96, 54, 0.92);
+  background: rgb(234, 96, 54);
+  background-clip: border-box;
   border: 2px solid #fff;
   box-shadow: 0 2px 8px rgba(15, 23, 42, 0.35);
   color: #fff;
